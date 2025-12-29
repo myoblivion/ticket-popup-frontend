@@ -3,96 +3,65 @@ import React, { useState, useEffect, useContext, useRef } from 'react';
 import { db, auth } from '../firebaseConfig';
 import { 
   doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, 
-  arrayUnion, arrayRemove, query, where, onSnapshot, orderBy 
+  query, where, onSnapshot, orderBy 
 } from 'firebase/firestore'; 
 import { LanguageContext } from '../contexts/LanguageContext';
 
 // --- CONFIGURATION ---
-// ⚠️ SECURITY WARNING: Revoke this token in BotFather and move logic to Backend (Cloud Functions) for production.
 const TELEGRAM_BOT_TOKEN = '8204073221:AAEuEMTZoeRAPBx0IjkSc-ZafHjiTMarb6g'; 
 
-// --- TELEGRAM HELPER (Updated) ---
+// --- ICONS ---
+const PaperClipIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>;
+const LinkIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>;
+
+// --- TELEGRAM HELPER (Kept Same) ---
 const sendTelegramNotification = async (chatId, type, details) => {
     if (!TELEGRAM_BOT_TOKEN || !chatId) return;
-
-    const { userName, projectName, taskName, startTime, duration, priority, projectUrl } = details;
+    const { userName, projectName, taskName, duration, projectUrl, notes, fileCount } = details;
     const now = new Date().toLocaleString();
-    const startStr = startTime ? new Date(startTime).toLocaleString() : now;
-
-    let message = '';
-
-    // --- FIX: Display raw URL so Telegram auto-links it (works better for localhost) ---
     const linkHtml = projectUrl ? `\n\n🔗 ${projectUrl}` : '';
-
-    if (type === 'create_task') {
-        message = `
-<b>🆕 New Task Created</b>
-👤 <b>User:</b> ${userName}
-📂 <b>Project:</b> ${projectName}
-📝 <b>Task:</b> ${taskName}
-🔥 <b>Priority:</b> ${priority}${linkHtml}
-        `;
-    } else if (type === 'start' || type === 'resume') {
-        const emoji = type === 'resume' ? '▶️' : '🚀';
-        const action = type === 'resume' ? 'Resumed Task' : 'Started Task';
-        
-        message = `
-<b>${emoji} User ${action}</b>
-👤 <b>User:</b> ${userName}
-📂 <b>Project:</b> ${projectName}
-TB <b>Task:</b> ${taskName}
-⏰ <b>Start Time:</b> ${startStr}${linkHtml}
-        `;
-    } else {
-        // Stop or Pause
-        const emoji = type === 'pause' ? '⏸️' : '🛑';
-        const action = type === 'pause' ? 'Paused Task' : 'Stopped Task';
-        
-        message = `
-<b>${emoji} User ${action}</b>
-👤 <b>User:</b> ${userName}
-📂 <b>Project:</b> ${projectName}
-TB <b>Task:</b> ${taskName}
-⏱️ <b>Duration:</b> ${duration}
-⏰ <b>Start:</b> ${startStr}
-🏁 <b>End:</b> ${now}${linkHtml}
-        `;
+    let message = '';
+    switch (type) {
+        case 'start':
+        case 'resume':
+            const emojiStart = type === 'resume' ? '▶️' : '🚀';
+            message = `<b>${emojiStart} User ${type === 'resume' ? 'Resumed' : 'Started'} Task</b>\n👤 <b>User:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⏰ <b>Time:</b> ${now}${linkHtml}`;
+            break;
+        case 'submit':
+            message = `<b>✋ Task Submitted for QA</b>\n👤 <b>User:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⏱️ <b>Duration:</b> ${duration}\n📄 <b>Notes:</b> ${notes || 'No notes.'}\n📎 <b>Files/Images:</b> ${fileCount || 0}${linkHtml}`;
+            break;
+        case 'completed':
+            message = `<b>✅ Task Approved & Completed</b>\n👤 <b>Approver:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}${linkHtml}`;
+            break;
+        case 'revision':
+            message = `<b>↩️ Revision Requested</b>\n👤 <b>Reviewer:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}${linkHtml}`;
+            break;
+        case 'pause':
+            message = `<b>⏸️ User Paused Task</b>\n👤 <b>User:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⏱️ <b>Duration:</b> ${duration}${linkHtml}`;
+            break;
+        default: break;
     }
-
-    try {
-        await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                chat_id: chatId,
-                text: message,
-                parse_mode: 'HTML',
-                disable_web_page_preview: true 
-            })
-        });
-    } catch (error) {
-        console.error("Failed to send Telegram notification", error);
+    if (message) {
+        try {
+            await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true })
+            });
+        } catch (error) { console.error("Failed to send Telegram notification", error); }
     }
 };
 
-// --- FORMATTER ---
 const formatDuration = (ms) => {
     if (ms < 0) ms = 0;
     const seconds = Math.floor((ms / 1000) % 60);
     const minutes = Math.floor((ms / (1000 * 60)) % 60);
     const hours = Math.floor((ms / (1000 * 60 * 60)) % 24);
-    
-    const hh = String(hours).padStart(2, '0');
-    const mm = String(minutes).padStart(2, '0');
-    const ss = String(seconds).padStart(2, '0');
-
-    return `${hh}:${mm}:${ss}`;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 };
 
-// --- LIVE TIMER COMPONENT ---
 const LiveDuration = ({ startTime, isPaused }) => {
     const [elapsed, setElapsed] = useState(0);
-
     useEffect(() => {
         if (!startTime) return;
         const start = startTime.toDate ? startTime.toDate() : new Date(startTime);
@@ -101,568 +70,363 @@ const LiveDuration = ({ startTime, isPaused }) => {
         const interval = setInterval(tick, 1000); 
         return () => clearInterval(interval);
     }, [startTime]);
-
-    return (
-        <span className={`font-mono text-sm font-bold ${isPaused ? 'text-orange-500' : 'text-green-600'}`}>
-            {isPaused ? 'Paused: ' : ''}{formatDuration(elapsed)}
-        </span>
-    );
+    return <span className={`font-mono text-xl font-bold ${isPaused ? 'text-orange-500' : 'text-green-600'}`}>{isPaused ? 'Paused: ' : ''}{formatDuration(elapsed)}</span>;
 };
 
-const HandoverPopup = ({ teamId, handoverId, onClose, membersDetails = [], currentUserUid }) => {
+// --- MAIN COMPONENT ---
+const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [], currentUserUid }) => {
   const { t } = useContext(LanguageContext);
-  const [data, setData] = useState(null);
+  const [projectData, setProjectData] = useState(null);
+  const [taskData, setTaskData] = useState(null);
   const [loading, setLoading] = useState(true);
-  
-  // Dynamic Telegram Chat ID State
   const [telegramChatId, setTelegramChatId] = useState(null);
 
-  // Task State
-  const [newTaskName, setNewTaskName] = useState('');
-  const [newTaskPriority, setNewTaskPriority] = useState('Medium'); 
-  
-  // Comment State
+  // --- COMMENTS ---
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
-  
-  // Active Work Session
+  const messagesEndRef = useRef(null);
+
+  // --- ACTIVE SESSION ---
   const [activeSession, setActiveSession] = useState(null);
 
+  // --- SUBMISSION MODAL ---
+  const [submissionModal, setSubmissionModal] = useState(false);
+  const [submissionNote, setSubmissionNote] = useState('');
+  const [submissionImages, setSubmissionImages] = useState([]); 
+  const [submissionFiles, setSubmissionFiles] = useState([]); 
+
   const [isCreator, setIsCreator] = useState(false);
-  const messagesEndRef = useRef(null);
 
   const resolveName = (uid) => {
     if (!uid) return 'Unknown';
     const member = membersDetails.find(m => m.uid === uid);
-    if (member) return member.displayName || member.email;
-    return uid;
+    return member ? (member.displayName || member.email) : uid;
   };
 
-  // 1. Fetch Project Data & Team Config
+  // 1. Fetch Project & Find Task
   useEffect(() => {
     if (!teamId || !handoverId) return;
     const fetchData = async () => {
       setLoading(true);
       try {
-        // A. Fetch Handover Data
         const docRef = doc(db, 'teams', teamId, 'handovers', handoverId);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          const docData = docSnap.data();
-          setData({ id: docSnap.id, ...docData });
-          if (auth.currentUser && docData.createdBy === auth.currentUser.uid) {
-              setIsCreator(true);
-          }
+          const d = docSnap.data();
+          setProjectData({ id: docSnap.id, ...d });
+          if (auth.currentUser && d.createdBy === auth.currentUser.uid) setIsCreator(true);
+          
+          // Find Specific Task
+          const foundTask = d.projectTasks?.find(t => t.id === taskId);
+          setTaskData(foundTask || null);
         }
-
-        // B. Fetch Team Data (Telegram ID)
         const teamRef = doc(db, 'teams', teamId);
         const teamSnap = await getDoc(teamRef);
-        if (teamSnap.exists()) {
-            const teamData = teamSnap.data();
-            if (teamData.telegramChatId) {
-                setTelegramChatId(teamData.telegramChatId);
-            }
-        }
-
-      } catch (err) {
-        console.error("Error fetching details:", err);
-      } finally {
-        setLoading(false);
-      }
+        if (teamSnap.exists() && teamSnap.data().telegramChatId) setTelegramChatId(teamSnap.data().telegramChatId);
+      } catch (err) { console.error("Error fetching details:", err); } finally { setLoading(false); }
     };
     fetchData();
-  }, [teamId, handoverId]);
+  }, [teamId, handoverId, taskId]);
 
-  // 2. Fetch Comments
+  // 2. Fetch Project Comments (We still show project chat for context)
   useEffect(() => {
       if(!teamId || !handoverId) return;
-      const q = query(
-          collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'),
-          orderBy('createdAt', 'asc')
-      );
+      const q = query(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), orderBy('createdAt', 'asc'));
       const unsub = onSnapshot(q, (snapshot) => {
-          const fetchedComments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-          setComments(fetchedComments);
+          setComments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
           setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
       });
       return () => unsub();
   }, [teamId, handoverId]);
 
-  // 3. Monitor Active Work Session
+  // 3. Monitor Active Session
   useEffect(() => {
       if(!currentUserUid || !teamId || !handoverId) return;
-      const q = query(
-          collection(db, 'teams', teamId, 'workLogs'),
-          where('userId', '==', currentUserUid),
-          where('handoverId', '==', handoverId),
-          where('status', 'in', ['active', 'paused']) 
-      );
+      const q = query(collection(db, 'teams', teamId, 'workLogs'), where('userId', '==', currentUserUid), where('handoverId', '==', handoverId), where('status', 'in', ['active', 'paused']));
       const unsub = onSnapshot(q, (snapshot) => {
-          if (!snapshot.empty) {
-              const docData = snapshot.docs[0].data();
-              setActiveSession({ id: snapshot.docs[0].id, ...docData });
-          } else {
-              setActiveSession(null);
-          }
+          if (!snapshot.empty) setActiveSession({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
+          else setActiveSession(null);
       });
       return () => unsub();
   }, [teamId, handoverId, currentUserUid]);
 
-
   // --- ACTIONS ---
-
-  const handleAddTask = async (e) => {
-      e.preventDefault();
-      if (!newTaskName.trim()) return;
-
-      const newTask = {
-          id: Date.now().toString(), 
-          title: newTaskName,
-          priority: newTaskPriority,
-          status: 'Open',
-          createdAt: new Date().toISOString()
-      };
-
+  const handleUpdateTaskStatus = async (newStatus, additionalData = {}) => {
       try {
           const docRef = doc(db, 'teams', teamId, 'handovers', handoverId);
-          await updateDoc(docRef, { projectTasks: arrayUnion(newTask) });
-          setData(prev => ({ ...prev, projectTasks: [...(prev.projectTasks || []), newTask] }));
+          const docSnap = await getDoc(docRef);
+          if (!docSnap.exists()) return;
           
-          // --- SEND TELEGRAM ---
-          const currentUser = auth.currentUser;
-          const userName = currentUser?.displayName || currentUser?.email || 'Unknown';
-          const projectName = data?.title || 'Untitled Project';
-          // Construct Link
-          const projectUrl = `${window.location.origin}/team/${teamId}`;
+          let tasks = docSnap.data().projectTasks || [];
+          const taskIndex = tasks.findIndex(t => t.id === taskId);
+          if (taskIndex === -1) return;
 
-          sendTelegramNotification(telegramChatId, 'create_task', {
-              userName,
-              projectName,
-              taskName: newTaskName,
-              priority: newTaskPriority,
-              projectUrl: projectUrl 
-          });
+          tasks[taskIndex].status = newStatus;
+          if (Object.keys(additionalData).length > 0) tasks[taskIndex] = { ...tasks[taskIndex], ...additionalData };
 
-          // Reset Form
-          setNewTaskName('');
-          setNewTaskPriority('Medium');
-      } catch (err) {
-          console.error("Error adding task:", err);
-      }
+          await updateDoc(docRef, { projectTasks: tasks });
+          setTaskData({ ...tasks[taskIndex] }); // Update local state
+      } catch (err) { console.error("Error updating status:", err); }
   };
 
-  const handleDeleteTask = async (taskToDelete) => {
-      if (!window.confirm("Are you sure you want to delete this task?")) return;
-
-      try {
-          const docRef = doc(db, 'teams', teamId, 'handovers', handoverId);
-          const updatedTasks = data.projectTasks.filter(t => t.id !== taskToDelete.id);
-          
-          await updateDoc(docRef, { projectTasks: updatedTasks });
-          setData(prev => ({ ...prev, projectTasks: updatedTasks }));
-
-      } catch (err) {
-          console.error("Error deleting task:", err);
-      }
-  };
-
-  const handlePostComment = async (e) => {
-      e.preventDefault();
-      if(!newComment.trim() || !currentUserUid) return;
-      
-      const currentUser = auth.currentUser;
-      const userName = currentUser?.displayName || currentUser?.email || 'Unknown';
-
-      try {
-          await addDoc(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), {
-              text: newComment,
-              userId: currentUserUid,
-              userName: userName,
-              createdAt: serverTimestamp()
-          });
-          setNewComment('');
-      } catch (err) {
-          console.error("Error posting comment:", err);
-      }
-  };
-
-  // --- TOGGLE WORK LOGIC WITH TELEGRAM INTEGRATION ---
-  const handleToggleWork = async (taskId, taskTitle, actionType = 'start') => {
-      if(!currentUserUid) return;
-      const currentUser = auth.currentUser;
-      const userName = currentUser?.displayName || currentUser?.email || 'Unknown';
-      const projectName = data?.title || 'Untitled Project';
-      
-      // Construct Link
+  const handleToggleWork = async (actionType) => {
+      if(!currentUserUid || !taskData) return;
+      const userName = auth.currentUser?.displayName || 'Unknown';
       const projectUrl = `${window.location.origin}/team/${teamId}`;
 
       try {
-          // If we have an existing session (active or paused)
+          if (actionType === 'start' || actionType === 'resume') handleUpdateTaskStatus('In Progress');
+
           if (activeSession) {
-              
-              // 1. Close current session
               const logRef = doc(db, 'teams', teamId, 'workLogs', activeSession.id);
+              const endTime = new Date();
+              const startTime = activeSession.startTime?.toDate ? activeSession.startTime.toDate() : new Date(activeSession.startTime);
+              const durationStr = formatDuration(endTime - startTime);
+              await updateDoc(logRef, { endTime: serverTimestamp(), status: 'completed', action: actionType === 'pause' ? 'Paused' : 'Stopped' });
               
-              let historyLabel = '';
-              if (activeSession.status === 'active') {
-                  historyLabel = actionType === 'pause' ? `Paused: ${taskTitle}` : `Stopped: ${taskTitle}`;
-              } else {
-                  historyLabel = actionType === 'resume' ? `Resumed: ${taskTitle}` : `Stopped (was paused): ${taskTitle}`;
-              }
-
-              // Calculate duration for Telegram
-              let durationStr = "00:00:00";
-              const startTimeDate = activeSession.startTime?.toDate ? activeSession.startTime.toDate() : new Date(activeSession.startTime);
-              const endTimeDate = new Date();
-              const diff = endTimeDate - startTimeDate;
-              durationStr = formatDuration(diff);
-
-              await updateDoc(logRef, {
-                  endTime: serverTimestamp(),
-                  status: 'completed',
-                  action: historyLabel
-              });
-
-              // --- SEND TELEGRAM: STOP or PAUSE ---
-              if(actionType === 'pause' || actionType === 'stop') {
-                  sendTelegramNotification(telegramChatId, actionType, {
-                      userName,
-                      projectName,
-                      taskName: activeSession.taskTitle,
-                      startTime: startTimeDate,
-                      duration: durationStr,
-                      projectUrl: projectUrl 
-                  });
-              }
-
-              // 2. Open NEW session
-              if (actionType === 'pause') {
-                  await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
-                      type: 'status',
-                      action: `Paused: ${taskTitle}`,
-                      userName: userName,
-                      userId: currentUserUid,
-                      handoverId: handoverId,
-                      taskId: taskId,
-                      taskTitle: taskTitle,
-                      startTime: serverTimestamp(),
-                      status: 'paused',
-                      createdAt: serverTimestamp()
-                  });
-              } else if (actionType === 'resume') {
-                  await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
-                      type: 'task',
-                      action: `Resumed: ${taskTitle}`,
-                      userName: userName,
-                      userId: currentUserUid,
-                      handoverId: handoverId,
-                      taskId: taskId,
-                      taskTitle: taskTitle,
-                      startTime: serverTimestamp(),
-                      status: 'active',
-                      createdAt: serverTimestamp()
-                  });
-                  // Send Telegram Resume
-                  sendTelegramNotification(telegramChatId, 'resume', { 
-                      userName, projectName, taskName: taskTitle, projectUrl 
-                  });
-
-              } else if (activeSession.taskId !== taskId && actionType === 'start') {
-                  // Switching Tasks
-                  await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
-                      type: 'task',
-                      action: `Started: ${taskTitle}`,
-                      userName: userName,
-                      userId: currentUserUid,
-                      handoverId: handoverId,
-                      taskId: taskId,
-                      taskTitle: taskTitle,
-                      startTime: serverTimestamp(),
-                      status: 'active',
-                      createdAt: serverTimestamp()
-                  });
-                  // Send Telegram Start
-                  sendTelegramNotification(telegramChatId, 'start', { 
-                      userName, projectName, taskName: taskTitle, projectUrl 
-                  });
-              }
-
-          } else {
-              // No current session, Start New
-              await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
-                  type: 'task',
-                  action: `Started: ${taskTitle}`,
-                  userName: userName,
-                  userId: currentUserUid,
-                  handoverId: handoverId,
-                  taskId: taskId,
-                  taskTitle: taskTitle,
-                  startTime: serverTimestamp(),
-                  status: 'active',
-                  createdAt: serverTimestamp()
-              });
-              // Send Telegram Start
-              sendTelegramNotification(telegramChatId, 'start', { 
-                  userName, projectName, taskName: taskTitle, projectUrl 
-              });
+              if (actionType === 'pause') sendTelegramNotification(telegramChatId, 'pause', { userName, projectName: projectData.title, taskName: taskData.title, duration: durationStr, projectUrl });
           }
-      } catch (err) {
-          console.error("Error toggling work:", err);
+
+          if (actionType === 'start' || actionType === 'resume') {
+              await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
+                  type: 'task', action: 'Working', userName, userId: currentUserUid, handoverId, taskId, taskTitle: taskData.title, startTime: serverTimestamp(), status: 'active', createdAt: serverTimestamp()
+              });
+              sendTelegramNotification(telegramChatId, actionType, { userName, projectName: projectData.title, taskName: taskData.title, projectUrl });
+          }
+      } catch (err) { console.error("Error toggling work:", err); }
+  };
+
+  const handleConfirmSubmit = async () => {
+      const userName = auth.currentUser?.displayName || 'Unknown';
+      
+      if (activeSession) {
+          const logRef = doc(db, 'teams', teamId, 'workLogs', activeSession.id);
+          const endTime = new Date();
+          const startTime = activeSession.startTime?.toDate ? activeSession.startTime.toDate() : new Date(activeSession.startTime);
+          const durationStr = formatDuration(endTime - startTime);
+          await updateDoc(logRef, { endTime: serverTimestamp(), status: 'completed', action: 'Submitted' });
+          sendTelegramNotification(telegramChatId, 'submit', { userName, projectName: projectData.title, taskName: taskData.title, duration: durationStr, notes: submissionNote, fileCount: submissionImages.length + submissionFiles.length, projectUrl: `${window.location.origin}/team/${teamId}` });
+      } else {
+          sendTelegramNotification(telegramChatId, 'submit', { userName, projectName: projectData.title, taskName: taskData.title, duration: 'N/A', notes: submissionNote, fileCount: submissionImages.length + submissionFiles.length, projectUrl: `${window.location.origin}/team/${teamId}` });
+      }
+
+      await handleUpdateTaskStatus('QA', {
+          submission: {
+              note: submissionNote,
+              images: submissionImages,
+              files: submissionFiles,
+              submittedBy: currentUserUid,
+              submittedAt: new Date().toISOString()
+          }
+      });
+      setSubmissionModal(false);
+  };
+
+  const processPaste = (e, setImagesFunc) => {
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf("image") !== -1) {
+              const blob = items[i].getAsFile();
+              const reader = new FileReader();
+              reader.onload = (evt) => setImagesFunc(prev => [...prev, evt.target.result]);
+              reader.readAsDataURL(blob);
+          }
       }
   };
 
-  const getPriorityColor = (p) => {
-      switch(p) {
-          case 'High': return 'text-red-600 bg-red-50 border-red-200';
-          case 'Low': return 'text-gray-600 bg-gray-50 border-gray-200';
-          default: return 'text-blue-600 bg-blue-50 border-blue-200';
+  const handleFileUpload = (e, setFilesFunc) => {
+      const files = Array.from(e.target.files);
+      files.forEach(file => {
+          const reader = new FileReader();
+          reader.onload = (evt) => setFilesFunc(prev => [...prev, { name: file.name, data: evt.target.result, type: file.type }]);
+          reader.readAsDataURL(file);
+      });
+  };
+
+  // --- HELPERS ---
+  const getStatusColor = (status) => {
+      switch(status) {
+          case 'In Progress': return 'bg-blue-100 text-blue-700';
+          case 'QA': return 'bg-purple-100 text-purple-700';
+          case 'Completed': return 'bg-green-100 text-green-700';
+          default: return 'bg-gray-100 text-gray-600';
       }
   };
 
-  if (!teamId || !handoverId) return null;
+  if (!teamId || !handoverId || !taskId) return null;
+
+  const isAssigned = taskData && ( (Array.isArray(taskData.assignedTo) && taskData.assignedTo.includes(currentUserUid)) || isCreator );
+  const isActive = activeSession && activeSession.taskId === taskId && activeSession.status === 'active';
+  const isPaused = activeSession && activeSession.taskId === taskId && activeSession.status === 'paused';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
         
-        {/* Header */}
-        <div className="flex justify-between items-center p-4 border-b bg-gray-50">
-          <div className="flex items-center gap-4">
-             <div>
-                 <h3 className="text-lg font-bold text-gray-800 leading-none">
-                     {loading ? 'Loading...' : (data?.title || 'Project Details')}
-                 </h3>
-                 <p className="text-xs text-gray-500 mt-1">
-                    Project Container 
-                    {telegramChatId && <span className="ml-2 text-green-600 font-bold">• Bot Linked</span>}
-                 </p>
-             </div>
-             {/* ID Display for user to copy for the bot command */}
-             <div className="hidden sm:flex bg-gray-100 px-2 py-1 rounded border text-[10px] text-gray-500 gap-1 items-center" title="Copy ID for Bot">
-                <span>ID: {teamId}</span>
-             </div>
+        {/* HEADER */}
+        <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 bg-white">
+          <div>
+             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wide">{projectData?.title || 'Project'}</h3>
+             <h2 className="text-xl font-extrabold text-slate-800">{loading ? 'Loading...' : (taskData?.title || 'Task Details')}</h2>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 bg-white rounded-full p-1 shadow-sm">
+          <button onClick={onClose} className="bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 p-2 rounded-full transition-all">
              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-0 flex flex-col md:flex-row h-full">
+        <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-slate-50">
           
-          {/* LEFT: Main Details & Tasks */}
-          <div className="flex-1 p-6 border-r border-gray-100 flex flex-col overflow-y-auto custom-scrollbar">
-             {!loading && data && (
-                <div className="space-y-6">
-                  {/* Description */}
-                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 text-sm text-gray-700">
-                      {data.description || 'No description provided.'}
-                  </div>
-
-                  {/* Task List */}
-                  <div className="mt-4">
-                      <h4 className="text-sm font-bold text-gray-800 uppercase tracking-wide mb-3 flex justify-between items-center">
-                          Tasks
-                      </h4>
-
-                      {isCreator && (
-                          <form onSubmit={handleAddTask} className="flex gap-2 mb-4 bg-gray-50 p-2 rounded border border-gray-200">
-                              <input 
-                                type="text" 
-                                value={newTaskName}
-                                onChange={(e) => setNewTaskName(e.target.value)}
-                                placeholder="New task..."
-                                className="flex-1 border rounded px-3 py-1.5 text-sm focus:ring-blue-500 focus:border-blue-500"
-                              />
-                              <select 
-                                value={newTaskPriority} 
-                                onChange={(e) => setNewTaskPriority(e.target.value)}
-                                className="border rounded px-2 py-1.5 text-sm bg-white"
-                              >
-                                  <option value="High">High</option>
-                                  <option value="Medium">Medium</option>
-                                  <option value="Low">Low</option>
-                              </select>
-                              <button type="submit" disabled={!newTaskName.trim()} className="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-medium hover:bg-blue-700 disabled:opacity-50">Add</button>
-                          </form>
-                      )}
-
-                      <div className="space-y-2">
-                          {data.projectTasks && data.projectTasks.length > 0 ? (
-                              data.projectTasks.map((task) => {
-                                  // Determine if this specific task is the one in the session
-                                  const isSessionTask = activeSession && activeSession.taskId === task.id;
-                                  
-                                  // Determine status: 'active', 'paused', or null
-                                  const sessionStatus = isSessionTask ? activeSession.status : null;
-                                  
-                                  const isActive = sessionStatus === 'active';
-                                  const isPaused = sessionStatus === 'paused';
-                                  
-                                  return (
-                                      <div key={task.id} className={`flex items-center justify-between p-3 rounded border ${isSessionTask ? (isPaused ? 'bg-orange-50 border-orange-200' : 'bg-green-50 border-green-200 shadow-sm') : 'bg-white border-gray-200 hover:bg-gray-50'}`}>
-                                          <div className="flex items-center gap-3">
-                                              <span className={`text-xs px-2 py-0.5 rounded border ${getPriorityColor(task.priority)}`}>
-                                                  {task.priority}
-                                              </span>
-                                              <span className={`text-sm font-medium ${isSessionTask ? 'text-gray-900' : 'text-gray-700'}`}>{task.title}</span>
-                                              
-                                              {/* DELETE TASK BUTTON (Only for Creator) */}
-                                              {isCreator && (
-                                                  <button 
-                                                      onClick={() => handleDeleteTask(task)}
-                                                      className="text-gray-300 hover:text-red-500 ml-2"
-                                                      title="Delete Task"
-                                                  >
-                                                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                                  </button>
-                                              )}
-                                          </div>
-                                          <div className="flex items-center gap-3">
-                                              {isSessionTask && <LiveDuration startTime={activeSession.startTime} isPaused={isPaused} />}
-                                              
-                                              {/* Logic for Buttons */}
-                                              {isActive && (
-                                                  <div className="flex gap-1">
-                                                      <button 
-                                                        onClick={() => handleToggleWork(task.id, task.title, 'pause')}
-                                                        className="px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1 bg-yellow-100 text-yellow-700 border border-yellow-200 hover:bg-yellow-200"
-                                                        title="Pause Timer"
-                                                      >
-                                                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                                                        Pause
-                                                      </button>
-                                                      <button 
-                                                        onClick={() => handleToggleWork(task.id, task.title, 'stop')}
-                                                        className="px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1 bg-red-100 text-red-700 border border-red-200 hover:bg-red-200"
-                                                        title="Stop Work"
-                                                      >
-                                                        <span className="w-2 h-2 bg-red-500 rounded-sm"></span>
-                                                        Stop
-                                                      </button>
-                                                  </div>
-                                              )}
-
-                                              {isPaused && (
-                                                   <div className="flex gap-1">
-                                                      <button 
-                                                        onClick={() => handleToggleWork(task.id, task.title, 'resume')}
-                                                        className="px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1 bg-green-100 text-green-700 border border-green-200 hover:bg-green-200"
-                                                        title="Resume Work"
-                                                      >
-                                                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/></svg> 
-                                                        Resume
-                                                      </button>
-                                                      <button 
-                                                        onClick={() => handleToggleWork(task.id, task.title, 'stop')}
-                                                        className="px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1 bg-red-100 text-red-700 border border-red-200 hover:bg-red-200"
-                                                        title="Stop Work"
-                                                      >
-                                                        <span className="w-2 h-2 bg-red-500 rounded-sm"></span>
-                                                        Stop
-                                                      </button>
-                                                   </div>
-                                              )}
-
-                                              {!isSessionTask && (
-                                                  <button 
-                                                    onClick={() => handleToggleWork(task.id, task.title, 'start')}
-                                                    className="px-3 py-1.5 rounded text-xs font-bold transition flex items-center gap-1 bg-white border-gray-300 text-gray-700 border hover:bg-green-50 hover:text-green-700 hover:border-green-200"
-                                                  >
-                                                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd"/></svg> 
-                                                    Start
-                                                  </button>
-                                              )}
-                                          </div>
-                                      </div>
-                                  );
-                              })
-                          ) : (
-                              <p className="text-sm text-gray-400 italic text-center py-4">No tasks yet.</p>
-                          )}
-                      </div>
-                  </div>
-                </div>
-             )}
-          </div>
-
-          {/* RIGHT: History & Comments */}
-          <div className="w-full md:w-80 flex flex-col border-t md:border-t-0 md:border-l border-gray-200 bg-gray-50 h-full">
-              
-              {/* History Section (Top 40%) */}
-              <div className="flex-shrink-0 h-1/3 border-b border-gray-200 p-4 overflow-y-auto">
-                  <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3 sticky top-0 bg-gray-50 pb-2">Recent Activity</h4>
-                  {!loading && data && (
-                     <div className="space-y-4 relative pl-3 border-l-2 border-gray-200">
-                        <div className="relative">
-                           <div className="absolute -left-[19px] top-1 w-2.5 h-2.5 rounded-full bg-gray-400"></div>
-                           <p className="text-xs text-gray-500">Project Created</p>
-                           <p className="text-[10px] text-gray-400">{new Date(data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt).toLocaleString()}</p>
-                           <p className="text-[10px] text-gray-500 mt-0.5">by {resolveName(data.postedBy)}</p>
-                        </div>
+          {/* LEFT: TASK DETAILS */}
+          <div className="flex-1 p-8 overflow-y-auto custom-scrollbar flex flex-col">
+             
+             {!loading && taskData ? (
+                 <div className="space-y-8">
+                     
+                     {/* 1. Status Bar & Actions */}
+                     <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                         <div className="flex items-center gap-3">
+                             <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${getStatusColor(taskData.status)}`}>{taskData.status}</span>
+                             <span className={`px-3 py-1 rounded-full text-xs font-bold border ${taskData.priority === 'High' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>{taskData.priority}</span>
+                         </div>
+                         
+                         {/* TIMER & CONTROLS */}
+                         {isAssigned && taskData.status !== 'Completed' && (
+                             <div className="flex items-center gap-3">
+                                 {isActive && <LiveDuration startTime={activeSession.startTime} isPaused={false} />}
+                                 {isPaused && <span className="text-orange-500 font-mono font-bold">Paused</span>}
+                                 
+                                 {(!isActive && !isPaused) && (
+                                     <button onClick={() => handleToggleWork('start')} className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg shadow-green-500/30 hover:bg-green-700 transition">Start Work</button>
+                                 )}
+                                 {isPaused && (
+                                     <button onClick={() => handleToggleWork('resume')} className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 transition">Resume</button>
+                                 )}
+                                 {isActive && (
+                                     <>
+                                        <button onClick={() => handleToggleWork('pause')} className="bg-amber-100 text-amber-700 px-4 py-2 rounded-lg font-bold hover:bg-amber-200">Pause</button>
+                                        <button onClick={() => setSubmissionModal(true)} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700">Submit</button>
+                                     </>
+                                 )}
+                             </div>
+                         )}
                      </div>
-                  )}
-              </div>
 
-              {/* Comments Section (Bottom 60%) */}
-              <div className="flex-1 flex flex-col bg-white">
-                  <div className="p-3 bg-gray-50 border-b border-gray-200">
-                      <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide">Comments</h4>
-                  </div>
-                  
-                  {/* Message List */}
-                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                      {comments.length === 0 ? (
-                          <p className="text-xs text-gray-400 text-center mt-4">No comments yet.</p>
-                      ) : (
-                          comments.map((msg) => (
-                              <div key={msg.id} className="text-sm">
-                                  <div className="flex justify-between items-baseline mb-1">
-                                      <span className="font-bold text-gray-800 text-xs">{msg.userName}</span>
-                                      <span className="text-[10px] text-gray-400">
-                                          {msg.createdAt?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                                      </span>
-                                  </div>
-                                  <div className="bg-gray-100 p-2 rounded-lg text-gray-700 break-words">
-                                      {msg.text}
-                                  </div>
-                              </div>
-                          ))
-                      )}
-                      <div ref={messagesEndRef} />
-                  </div>
+                     {/* 2. Description */}
+                     <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Description</h4>
+                         <div className="prose prose-sm text-slate-700 whitespace-pre-wrap">{taskData.description || 'No description provided.'}</div>
+                     </div>
 
-                  {/* Input */}
-                  <form onSubmit={handlePostComment} className="p-3 border-t border-gray-200">
-                      <div className="flex gap-2">
-                          <input 
-                            className="flex-1 border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-blue-500"
-                            placeholder="Type a comment..."
-                            value={newComment}
-                            onChange={e => setNewComment(e.target.value)}
-                          />
-                          <button 
-                            type="submit" 
-                            disabled={!newComment.trim()}
-                            className="bg-blue-600 text-white px-3 py-1.5 rounded text-xs font-bold hover:bg-blue-700 disabled:opacity-50"
-                          >
-                            Post
-                          </button>
-                      </div>
-                  </form>
-              </div>
+                     {/* 3. Attachments */}
+                     {( (taskData.images && taskData.images.length > 0) || (taskData.files && taskData.files.length > 0) || (taskData.links && taskData.links.length > 0) ) && (
+                         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+                             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><PaperClipIcon /> Resources</h4>
+                             
+                             {/* Links */}
+                             {taskData.links?.length > 0 && (
+                                 <div className="mb-4 flex flex-col gap-2">
+                                     {taskData.links.map((link, i) => (
+                                         <a key={i} href={link} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-blue-600 hover:underline text-sm bg-blue-50 p-2 rounded"><LinkIcon /> {link}</a>
+                                     ))}
+                                 </div>
+                             )}
 
+                             {/* Files Grid */}
+                             <div className="flex gap-4 flex-wrap">
+                                 {taskData.images?.map((img, i) => <img key={i} src={img} className="h-24 w-24 object-cover rounded-lg border shadow-sm cursor-pointer hover:scale-105 transition" onClick={() => window.open(img)} />)}
+                                 {taskData.files?.map((f, i) => (
+                                    <div key={i} className="h-24 w-24 bg-slate-50 border rounded-lg flex flex-col items-center justify-center p-2 text-center">
+                                        <span className="text-[10px] font-bold text-slate-600 uppercase line-clamp-2">{f.name}</span>
+                                        <span className="text-[9px] text-slate-400 mt-1">FILE</span>
+                                    </div>
+                                 ))}
+                             </div>
+                         </div>
+                     )}
+
+                     {/* 4. Submission Info (If QA) */}
+                     {taskData.submission && (
+                        <div className="bg-purple-50 p-6 rounded-xl border border-purple-100">
+                             <div className="flex items-center gap-2 mb-3">
+                                <span className="text-xs font-bold text-purple-700 uppercase">Submission by {resolveName(taskData.submission.submittedBy)}</span>
+                                <span className="text-[10px] text-purple-400">{new Date(taskData.submission.submittedAt).toLocaleString()}</span>
+                             </div>
+                             <p className="text-sm text-slate-700 mb-4 whitespace-pre-wrap">{taskData.submission.note}</p>
+                             <div className="flex gap-3 overflow-x-auto">
+                                {taskData.submission.images?.map((img, i) => <img key={i} src={img} className="h-20 w-20 object-cover rounded border" />)}
+                             </div>
+                             
+                             {/* ADMIN ACTIONS FOR QA */}
+                             {isCreator && taskData.status === 'QA' && (
+                                 <div className="flex gap-3 mt-4 pt-4 border-t border-purple-200">
+                                     <button onClick={() => { if(window.confirm("Request Revision?")) handleUpdateTaskStatus('Revision'); }} className="bg-white text-red-600 border border-red-200 px-4 py-2 rounded font-bold text-xs hover:bg-red-50">Request Revision</button>
+                                     <button onClick={() => { if(window.confirm("Approve?")) handleUpdateTaskStatus('Completed'); }} className="bg-emerald-600 text-white px-4 py-2 rounded font-bold text-xs hover:bg-emerald-700 shadow-sm">Approve & Complete</button>
+                                 </div>
+                             )}
+                        </div>
+                     )}
+
+                 </div>
+             ) : <div className="text-center py-20 text-slate-400">Task not found</div>}
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="p-4 border-t bg-gray-50 flex justify-end">
-          <button onClick={onClose} className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100 font-medium text-sm">
-            {t('common.close', 'Close')}
-          </button>
+          {/* RIGHT: CHAT (Project Context) */}
+          <div className="w-full lg:w-[350px] border-l border-slate-200 bg-white flex flex-col h-full shadow-lg z-20">
+               <div className="p-4 bg-slate-50 border-b border-slate-200">
+                   <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Discussion</h4>
+               </div>
+               
+               <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
+                  {comments.map((msg) => (
+                      <div key={msg.id} className="group">
+                          <div className="flex justify-between items-baseline mb-1 px-1">
+                              <span className="font-bold text-slate-700 text-xs">{msg.userName}</span>
+                              <span className="text-[10px] text-slate-400">{msg.createdAt?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                          </div>
+                          <div className="bg-white p-3 rounded-2xl rounded-tl-none border border-slate-200 text-slate-600 text-sm shadow-sm break-words">
+                              {msg.text}
+                          </div>
+                      </div>
+                  ))}
+                  <div ref={messagesEndRef} />
+               </div>
+
+               {/* CHAT INPUT */}
+               <form onSubmit={(e) => { e.preventDefault(); if(!newComment.trim()) return; addDoc(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), { text: newComment, userId: auth.currentUser.uid, userName: auth.currentUser.displayName || 'Unknown', createdAt: serverTimestamp() }); setNewComment(''); }} className="p-3 border-t border-slate-200 bg-white flex gap-2">
+                   <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type a message..." value={newComment} onChange={e => setNewComment(e.target.value)} />
+                   <button type="submit" disabled={!newComment.trim()} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 disabled:opacity-50 transition">Send</button>
+               </form>
+          </div>
         </div>
       </div>
+
+      {/* --- SUBMISSION MODAL (Overlay) --- */}
+      {submissionModal && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 animate-fade-in-up flex flex-col max-h-[90vh]">
+                <h3 className="text-xl font-bold text-slate-800 mb-4">Submit Work</h3>
+                <div className="flex-1 overflow-y-auto space-y-4">
+                    <textarea className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32" placeholder="Notes... (Paste images Ctrl+V)" value={submissionNote} onChange={(e) => setSubmissionNote(e.target.value)} onPaste={(e) => processPaste(e, setSubmissionImages)}></textarea>
+                    
+                    <div>
+                         <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Attachments</label>
+                         <label className="flex flex-col items-center justify-center w-full h-16 border-2 border-slate-300 border-dashed rounded-lg cursor-pointer hover:bg-slate-50">
+                            <span className="text-xs text-slate-500">Upload Files</span>
+                            <input type="file" multiple className="hidden" onChange={(e) => handleFileUpload(e, setSubmissionFiles)} />
+                        </label>
+                        <div className="flex gap-2 mt-2 flex-wrap">
+                            {submissionImages.map((img, i) => <img key={i} src={img} className="h-10 w-10 object-cover rounded border" />)}
+                            {submissionFiles.map((f, i) => <div key={i} className="px-2 py-1 bg-gray-100 rounded text-[10px] border">{f.name}</div>)}
+                        </div>
+                    </div>
+                </div>
+                <div className="flex justify-end gap-3 pt-4 border-t mt-2">
+                    <button onClick={() => setSubmissionModal(false)} className="px-4 py-2 text-slate-600 font-bold text-sm">Cancel</button>
+                    <button onClick={handleConfirmSubmit} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold text-sm hover:bg-blue-700">Confirm Submit</button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

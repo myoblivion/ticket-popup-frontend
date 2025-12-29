@@ -2,26 +2,32 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
-  doc, getDoc, collection, query, getDocs, deleteDoc, updateDoc,
-  orderBy, onSnapshot, limit
+  doc, getDoc, collection, query, orderBy, onSnapshot, deleteDoc
 } from "firebase/firestore";
 import { db, auth } from '../firebaseConfig';
 import { onAuthStateChanged } from "firebase/auth";
 import InviteMemberModal from './InviteMemberModal';
 import AnnounceModal from './AnnounceModal';
-import ScheduleMeetingModal from './ScheduleMeetingModal';
 import EditUpdateModal from './EditUpdateModal';
-import HandoversSection from './EndorsementModal';
+import HandoversSection from './EndorsementModal'; 
+import AddEndorsementModal from './AddEndorsementModal'; 
 import FAQSection from './FAQSection'; 
 import { LanguageContext } from '../contexts/LanguageContext.jsx';
 
 // --- Icons ---
-const HandoverIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>;
-const QuestionMarkCircleIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
-const XIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>;
-const MegaphoneIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>;
-const UserGroupIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>;
-const ClockIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+const ChevronDownIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>;
+const ChevronRightIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>;
+const PlusIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>;
+const TrashIcon = () => <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>;
+const FolderIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>;
+const AlertIcon = () => <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>;
+const UserGroupIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>;
+const MegaphoneIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>;
+const ClipboardIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>;
+const QuestionMarkCircleIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+const XIcon = () => <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>;
+const BellIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>;
+const BriefcaseIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>;
 
 // --- Helper Components ---
 const Spinner = ({ large = false }) => (
@@ -36,33 +42,6 @@ const formatDate = (value) => {
   return isNaN(d) ? '' : d.toLocaleString();
 };
 
-const formatTime12 = (timestamp) => {
-    if (!timestamp) return '...';
-    const d = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-};
-
-// --- NEW HELPER: Calculate Duration ---
-const getDurationString = (start, end) => {
-    if (!start) return '';
-    const startTime = start.toDate ? start.toDate() : new Date(start);
-    const endTime = end ? (end.toDate ? end.toDate() : new Date(end)) : new Date();
-    
-    const diffMs = endTime - startTime;
-    if (diffMs < 0) return '0s';
-
-    const seconds = Math.floor((diffMs / 1000) % 60);
-    const minutes = Math.floor((diffMs / (1000 * 60)) % 60);
-    const hours = Math.floor((diffMs / (1000 * 60 * 60)));
-
-    let str = '';
-    if (hours > 0) str += `${hours}h `;
-    if (minutes > 0) str += `${minutes}m `;
-    if (hours === 0 && minutes === 0) str += `${seconds}s`;
-    
-    return str.trim();
-};
-
 const linkify = (text) => {
   if (!text) return '';
   const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -70,8 +49,47 @@ const linkify = (text) => {
   return parts.map((part, i) => part.match(urlRegex) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{part}</a> : part);
 };
 
+// --- Members List Modal ---
+const MembersListModal = ({ isOpen, onClose, members, onInvite }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md flex flex-col max-h-[80vh] overflow-hidden">
+        <div className="flex justify-between items-center p-4 border-b bg-gray-50">
+          <h3 className="text-lg font-bold text-gray-800">Team Members ({members.length})</h3>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 p-1 bg-white rounded-full hover:bg-gray-100 transition"><XIcon /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2">
+          {members.length === 0 ? (
+              <p className="text-center text-gray-400 py-4 text-sm">No members yet.</p>
+          ) : (
+              <div className="space-y-1">
+                  {members.map(m => (
+                    <div key={m.uid} className="flex items-center gap-3 p-2 hover:bg-blue-50 rounded-lg border border-transparent hover:border-blue-100 transition-colors">
+                      <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold flex-shrink-0">
+                        {(m.displayName || m.email || '?')[0].toUpperCase()}
+                      </div>
+                      <div className="flex-1 overflow-hidden">
+                        <p className="text-sm font-bold text-gray-800 truncate">{m.displayName || 'Unnamed User'}</p>
+                        <p className="text-xs text-gray-500 truncate">{m.email}</p>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+          )}
+        </div>
+        <div className="p-4 border-t bg-gray-50">
+          <button onClick={() => { onClose(); onInvite(); }} className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-bold hover:bg-blue-700 shadow-sm transition-all flex items-center justify-center gap-2">
+            <PlusIcon /> Invite New Member
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- AnnouncementsSection ---
-const AnnouncementsSection = ({ teamId, refreshTrigger, isAdmin, onEdit }) => {
+const AnnouncementsSection = ({ teamId, isAdmin, onEdit }) => {
   const { t } = useContext(LanguageContext);
   const [updates, setUpdates] = useState([]);
   
@@ -84,29 +102,31 @@ const AnnouncementsSection = ({ teamId, refreshTrigger, isAdmin, onEdit }) => {
   }, [teamId]);
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50 flex items-center">
-         <MegaphoneIcon />
-         <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">{t('admin.tabUpdates')}</h3>
+    <div className="flex flex-col h-full bg-white">
+      <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+         <div className="flex items-center gap-2">
+            <BellIcon />
+            <h3 className="text-lg font-bold text-gray-800">Announcements</h3>
+         </div>
       </div>
       
       {updates.length === 0 ? (
-        <div className="p-6 text-center">
-            <p className="text-sm text-gray-400 italic">{t('admin.noUpdates')}</p>
+        <div className="p-12 text-center flex-1 flex items-center justify-center">
+            <p className="text-gray-400 italic">{t('admin.noUpdates')}</p>
         </div>
       ) : (
-        <ul className="divide-y divide-gray-50 overflow-y-auto max-h-[400px] custom-scrollbar">
+        <ul className="divide-y divide-gray-100 overflow-y-auto flex-1 p-4 custom-scrollbar">
           {updates.map(update => (
-            <li key={update.id} className="p-4 hover:bg-gray-50 transition-colors">
-              <div className={`text-xs font-bold uppercase mb-1 ${update.type === 'meeting' ? 'text-purple-600' : 'text-green-600'}`}>
+            <li key={update.id} className="p-4 mb-4 bg-gray-50 rounded-lg border border-gray-100 hover:shadow-sm transition-shadow">
+              <div className={`text-xs font-bold uppercase mb-2 ${update.type === 'meeting' ? 'text-purple-600' : 'text-blue-600'}`}>
                 {update.type === 'meeting' ? t('admin.meeting') : t('admin.announcement')}
               </div>
-              <div className="text-sm text-gray-800 whitespace-pre-wrap mb-2">{linkify(update.text || update.title)}</div>
-              <div className="flex justify-between items-end">
-                  <p className="text-[10px] text-gray-400">
+              <div className="text-sm text-gray-800 whitespace-pre-wrap mb-3 leading-relaxed">{linkify(update.text || update.title)}</div>
+              <div className="flex justify-between items-end border-t border-gray-200 pt-2 mt-2">
+                  <p className="text-[10px] text-gray-400 font-medium">
                       {update.creatorDisplayName} • {formatDate(update.createdAt)}
                   </p>
-                  {isAdmin && <button onClick={() => onEdit(update)} className="text-[10px] bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded">Edit</button>}
+                  {isAdmin && <button onClick={() => onEdit(update)} className="text-[10px] bg-white border border-gray-200 hover:bg-gray-50 text-gray-600 px-3 py-1 rounded font-medium shadow-sm">Edit</button>}
               </div>
             </li>
           ))}
@@ -116,129 +136,20 @@ const AnnouncementsSection = ({ teamId, refreshTrigger, isAdmin, onEdit }) => {
   );
 };
 
-// --- MembersSection ---
-const MembersSection = ({ membersDetails, teamData, canManageMembers, onInviteClick, onChangeRole }) => {
-  const { t } = useContext(LanguageContext);
-  return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 h-full flex flex-col overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
-        <div className="flex items-center text-gray-700">
-            <UserGroupIcon />
-            <h3 className="text-sm font-bold uppercase tracking-wide">{t('admin.tabMembers')}</h3>
+// --- Sidebar Item Helper ---
+const SidebarItem = ({ icon, label, active, onClick, hasSubmenu, expanded }) => (
+    <button 
+        onClick={onClick}
+        className={`w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium transition-colors ${active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+    >
+        <div className="flex items-center gap-3">
+            {icon}
+            <span>{label}</span>
         </div>
-        {canManageMembers && (
-            <button onClick={onInviteClick} className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium py-1 px-3 rounded-full transition-colors">
-                + {t('admin.invite')}
-            </button>
-        )}
-      </div>
-      <ul className="divide-y divide-gray-50 overflow-y-auto max-h-[300px] custom-scrollbar">
-        {membersDetails.map((member) => {
-            const uid = member.uid;
-            const isCreator = teamData?.createdBy === uid;
-            const roleRaw = teamData?.roles?.[uid] || 'member';
-            return (
-              <li key={uid} className="flex items-center justify-between p-3 hover:bg-gray-50 transition-colors">
-                <div className="flex items-center gap-3 overflow-hidden">
-                  <div className="flex-shrink-0 h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white flex items-center justify-center text-xs font-bold shadow-sm">
-                      {(member.displayName || member.email || '?')[0].toUpperCase()}
-                  </div>
-                  <div className="flex flex-col min-w-0">
-                      <span className="text-sm font-medium text-gray-900 truncate">{member.displayName || member.email}</span>
-                      <span className="text-[10px] text-gray-500">{isCreator ? 'Owner' : roleRaw}</span>
-                  </div>
-                </div>
-                {canManageMembers && !isCreator && (
-                    <select value={roleRaw} onChange={(e) => onChangeRole(uid, e.target.value)} className="text-xs border-gray-200 border rounded px-1 py-1 bg-white focus:ring-blue-500 focus:border-blue-500">
-                       <option value="admin">Admin</option>
-                       <option value="member">Member</option>
-                    </select>
-                )}
-              </li>
-            );
-        })}
-      </ul>
-    </div>
-  );
-};
+        {hasSubmenu && (expanded ? <ChevronDownIcon /> : <ChevronRightIcon />)}
+    </button>
+);
 
-// --- TeamWorkHistorySection ---
-const TeamWorkHistorySection = ({ teamId }) => {
-    const [history, setHistory] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [now, setNow] = useState(Date.now());
-
-    useEffect(() => {
-        const interval = setInterval(() => setNow(Date.now()), 60000); 
-        return () => clearInterval(interval);
-    }, []);
-
-    useEffect(() => {
-        const q = query(collection(db, 'teams', teamId, 'workLogs'), orderBy('createdAt', 'desc'), limit(50));
-        const unsub = onSnapshot(q, (snapshot) => {
-            const logs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setHistory(logs);
-            setLoading(false);
-        });
-        return () => unsub();
-    }, [teamId]);
-
-    return (
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col overflow-hidden h-full">
-        <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center">
-          <ClockIcon />
-          <h2 className="text-sm font-bold text-gray-700 uppercase tracking-wide">Work History Log</h2>
-        </div>
-        <div className="p-6 flex-1 overflow-auto bg-white custom-scrollbar">
-            {loading ? <Spinner /> : (
-                <div className="space-y-6 relative ml-2">
-                    {/* Timeline Line */}
-                    <div className="absolute left-4 top-2 bottom-2 w-px bg-gray-200 z-0"></div>
-                    
-                    {history.length === 0 && <p className="text-center text-gray-400 z-10 relative">No activity recorded yet.</p>}
-                    
-                    {history.map(log => {
-                        const isCompleted = log.status === 'completed';
-                        const isActive = log.status === 'active';
-                        const duration = getDurationString(log.startTime, isCompleted ? log.endTime : null);
-                        
-                        return (
-                            <div key={log.id} className="relative z-10 flex gap-4 group">
-                                <div className={`flex-shrink-0 w-8 h-8 rounded-full border-4 border-white shadow-sm flex items-center justify-center 
-                                    ${isActive ? 'bg-green-500 text-white animate-pulse' : 'bg-gray-100 text-gray-500'}`}>
-                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                </div>
-                                <div className="flex-1 pb-2">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <p className="text-sm font-semibold text-gray-800">{log.action || log.taskTitle}</p>
-                                            <p className="text-xs text-gray-500">by <span className="text-gray-700 font-medium">{log.userName}</span></p>
-                                        </div>
-                                        {isActive && <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">Active</span>}
-                                    </div>
-                                    
-                                    <div className="mt-2 flex items-center gap-3 text-xs text-gray-500 bg-gray-50 p-2 rounded-lg border border-gray-100">
-                                         <span className="font-mono">{formatTime12(log.startTime)}</span>
-                                         <span className="text-gray-300">→</span>
-                                         <span className="font-mono">{isCompleted ? formatTime12(log.endTime) : 'Now'}</span>
-                                         <div className="h-3 w-px bg-gray-300 mx-1"></div>
-                                         <span className={`font-bold ${isActive ? 'text-green-600' : 'text-gray-600'}`}>
-                                            {duration}
-                                         </span>
-                                    </div>
-                                    <p className="text-[10px] text-gray-300 mt-1 text-right">{formatDate(log.createdAt)}</p>
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
-        </div>
-      </div>
-    );
-};
-
-// --- TeamView Component ---
 const TeamView = () => {
   const { teamId } = useParams();
   const navigate = useNavigate();
@@ -251,16 +162,28 @@ const TeamView = () => {
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [announcementRefreshKey, setAnnouncementRefreshKey] = useState(0);
 
+  // --- Project State ---
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(null); // 'all' or specific ID
+  const [categoriesList, setCategoriesList] = useState([]);
+
+  // --- Sidebar State ---
+  const [sidebarState, setSidebarState] = useState({
+      projects: true,
+      myTasks: true,
+  });
+
   // Modals
   const [isFAQModalOpen, setIsFAQModalOpen] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [isMembersListOpen, setIsMembersListOpen] = useState(false); // New state for list modal
   const [isAnnounceModalOpen, setIsAnnounceModalOpen] = useState(false);
-  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [isViewAnnounceModalOpen, setIsViewAnnounceModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
 
   const [isMasterAdmin, setIsMasterAdmin] = useState(false);
-  const [isParentAdmin, setIsParentAdmin] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
@@ -270,6 +193,7 @@ const TeamView = () => {
     return unsub;
   }, [navigate, teamId]);
 
+  // Fetch Team & Members
   const fetchTeamAndMembers = useCallback(async () => {
     if (!teamId || !currentUser) return;
     setIsLoading(true); setError(null);
@@ -290,6 +214,7 @@ const TeamView = () => {
 
       setIsAuthorized(true);
       setTeamData({ id: teamDocSnap.id, ...teamD });
+      if(teamD.endorsementCategories) setCategoriesList(teamD.endorsementCategories);
 
       const uids = [...new Set(members.map(m => typeof m === 'object' ? m.uid : m))];
       if (uids.length > 0) {
@@ -301,27 +226,34 @@ const TeamView = () => {
 
   useEffect(() => { fetchTeamAndMembers(); }, [fetchTeamAndMembers, announcementRefreshKey]);
 
-  const changeRole = async (memberUid, newRole) => {
-      const isTeamCreator = teamData?.createdBy === currentUser?.uid;
-      const isWorkAdmin = isTeamCreator || isMasterAdmin;
-      if (!teamData || !currentUser || !isWorkAdmin || teamData.createdBy === memberUid) return;
-      
-      const targetUser = membersDetails.find(m => m.uid === memberUid);
-      if (targetUser && targetUser.role === 'Master Admin') { alert(t('admin.cannotChangeMasterAdmin')); return; }
+  // Fetch Projects for Sidebar
+  useEffect(() => {
+      if (!teamId || !isAuthorized) return;
+      const q = query(collection(db, `teams/${teamId}/handovers`), orderBy('createdAt', 'desc'));
+      const unsub = onSnapshot(q, (snapshot) => {
+         setProjects(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      });
+      return () => unsub();
+  }, [teamId, isAuthorized]);
 
-      const teamDocRef = doc(db, "teams", teamId);
-      const rolesUpdate = { ...teamData.roles, [memberUid]: newRole };
-      try {
-          await updateDoc(teamDocRef, { roles: rolesUpdate });
-          setTeamData(prev => ({ ...prev, roles: rolesUpdate }));
-      } catch (err) {
-          console.error("Error updating role:", err);
-          setError(t('admin.changeRoleError'));
-      }
+  const toggleSidebar = (section) => {
+      setSidebarState(prev => ({ ...prev, [section]: !prev[section] }));
   };
 
   const toggleModal = (type, isOpen, data) => {
       if(type === 'edit') { setEditTarget(data); setIsEditModalOpen(isOpen); }
+  };
+
+  const deleteProject = async (e, projectId, projectTitle) => {
+      e.stopPropagation();
+      if (!window.confirm(`Are you sure you want to delete project: "${projectTitle}"?\nThis cannot be undone.`)) return;
+      try {
+          await deleteDoc(doc(db, `teams/${teamId}/handovers`, projectId));
+          if (selectedProjectId === projectId) setSelectedProjectId(null); // Reset selection
+      } catch (err) {
+          alert("Error deleting project");
+          console.error(err);
+      }
   };
 
   const isTeamCreator = teamData?.createdBy === currentUser?.uid;
@@ -329,104 +261,214 @@ const TeamView = () => {
 
   return (
     <>
-      <div className="min-h-screen bg-gray-50 pb-12 font-sans w-full">
-        {/* Top Navbar Style Header */}
-        <div className="bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8 py-4 mb-8 sticky top-0 z-30 shadow-sm">
-            <div className="max-w-7xl mx-auto flex flex-col sm:flex-row justify-between items-center gap-4">
-                <div className="flex items-center gap-4">
-                    <Link to="/home" className="text-gray-400 hover:text-gray-600 transition-colors">
-                        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-                    </Link>
-                    <div>
-                         {isLoading ? <div className="h-6 w-32 bg-gray-200 animate-pulse rounded"></div> : (
-                             <h1 className="text-2xl font-bold text-gray-900 leading-none">{teamData?.teamName}</h1>
-                         )}
-                         <p className="text-xs text-gray-500 mt-1">Workforce Management Dashboard</p>
+      <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
+        
+        {/* --- LEFT SIDEBAR (Projects & Utilities) --- */}
+        {!isLoading && isAuthorized && (
+            <div className="w-64 bg-white border-r border-gray-200 flex flex-col flex-shrink-0 z-20">
+                {/* 1. Header/Logo Area */}
+                <div className="h-16 flex items-center px-6 border-b border-gray-100">
+                    <h1 className="text-lg font-bold text-gray-800 truncate">{teamData?.teamName || 'TeamFlow'}</h1>
+                </div>
+
+                {/* 2. Scrollable Menu Area */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar py-4 space-y-1">
+                    
+                    {/* UTILITIES */}
+                    <div className="px-4 mb-4">
+                         <div className="flex items-center gap-2 mb-2 px-2">
+                             <AlertIcon />
+                             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Workspace</p>
+                         </div>
+                        <button onClick={() => setIsFAQModalOpen(true)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+                            <QuestionMarkCircleIcon />
+                            <span>Info Board</span>
+                        </button>
+                        
+                        <button onClick={() => setIsViewAnnounceModalOpen(true)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+                            <BellIcon />
+                            <span>View Announcements</span>
+                        </button>
+
+                        <button onClick={() => setIsMembersListOpen(true)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+                            <UserGroupIcon />
+                            <span>Members ({membersDetails.length})</span>
+                        </button>
+                    </div>
+
+                    <div className="my-2 border-t border-gray-100 mx-4"></div>
+
+                    {/* PROJECT LIST */}
+                    <div className="px-4 mb-1 flex items-center justify-between group">
+                        <button 
+                             onClick={() => toggleSidebar('projects')}
+                             className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase tracking-wider hover:text-gray-600"
+                        >
+                             <BriefcaseIcon />
+                             Projects
+                        </button>
+                        {isWorkAdmin && (
+                            <button 
+                                onClick={() => setIsAddProjectModalOpen(true)}
+                                className="text-gray-400 hover:text-blue-600 p-1 rounded"
+                                title="Create New Project"
+                            >
+                                <PlusIcon />
+                            </button>
+                        )}
+                    </div>
+                    
+                    {sidebarState.projects && (
+                        <div className="space-y-0.5 px-2">
+                            {/* All Projects / All Tasks View */}
+                            <button 
+                                onClick={() => setSelectedProjectId(null)}
+                                className={`w-full text-left flex items-center px-3 py-2 text-sm rounded-md transition-colors ${selectedProjectId === null ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
+                            >
+                                <div className="flex-1 truncate">All Tasks</div>
+                            </button>
+
+                            {/* Individual Projects */}
+                            {projects.map(proj => (
+                                <div key={proj.id} className="relative group">
+                                    <button 
+                                        onClick={() => setSelectedProjectId(proj.id)}
+                                        className={`w-full text-left flex items-center px-3 py-2 text-sm rounded-md transition-colors pr-8 ${selectedProjectId === proj.id ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
+                                    >
+                                        <div className="flex items-center gap-2 truncate">
+                                            <FolderIcon />
+                                            <span className="truncate">{proj.title}</span>
+                                        </div>
+                                    </button>
+                                    {isWorkAdmin && (
+                                        <button 
+                                            onClick={(e) => deleteProject(e, proj.id, proj.title)}
+                                            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"
+                                            title="Delete Project"
+                                        >
+                                            <TrashIcon />
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                            {projects.length === 0 && (
+                                <div className="px-4 py-2 text-xs text-gray-400 italic">No projects yet.</div>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="my-2 border-t border-gray-100 mx-4"></div>
+                    
+                    {/* MY TASKS SHORTCUT */}
+                    <div className="px-4">
+                        <button 
+                            onClick={() => setSelectedProjectId('my_tasks')} // Special ID for filtering my tasks across all projects
+                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${selectedProjectId === 'my_tasks' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+                        >
+                            <ClipboardIcon />
+                            <span>My Assigned Tasks</span>
+                        </button>
+                    </div>
+
+                </div>
+
+                {/* 3. Footer / User Info */}
+                <div className="p-4 border-t border-gray-200 bg-gray-50">
+                    <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs">
+                            {currentUser?.email?.[0].toUpperCase()}
+                        </div>
+                        <div className="flex flex-col overflow-hidden">
+                            <span className="text-xs font-bold text-gray-700 truncate">{currentUser?.email}</span>
+                            <Link to="/home" className="text-[10px] text-blue-500 hover:underline">Switch Team</Link>
+                        </div>
                     </div>
                 </div>
-                {/* Global Actions on Header */}
-                <div className="flex gap-3">
-                     {/* Mobile Only Actions could go here, but kept simple for now */}
-                </div>
             </div>
-        </div>
+        )}
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          {isLoading && <Spinner large />}
-          {error && <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 text-center">{error}</div>}
-
-          {!isLoading && !error && teamData && isAuthorized && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-              
-              {/* --- MAIN COLUMN (Left - 8 Cols) --- */}
-              <div className="col-span-1 lg:col-span-8 space-y-8">
-                
-                {/* 1. Projects & Tasks (The Core Work) */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                   <div className="px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                         <div className="bg-blue-100 p-2 rounded-lg text-blue-600">
-                            <HandoverIcon />
-                         </div>
-                         <div>
-                            <h2 className="text-lg font-bold text-gray-900">Projects & Tasks</h2>
-                            <p className="text-xs text-gray-500">Manage deliverables and track active work</p>
-                         </div>
-                      </div>
-                   </div>
-                   <div className="p-0">
-                       <HandoversSection 
-                         teamId={teamId} 
-                         membersDetails={membersDetails}
-                         isTeamCreator={isTeamCreator}
-                         currentUserUid={currentUser?.uid}
-                       />
-                   </div>
-                </div>
-
-                {/* 2. Work History (Audit Trail) */}
-                <div style={{ height: '500px' }}>
-                    <TeamWorkHistorySection teamId={teamId} />
-                </div>
-              </div>
-
-              {/* --- SIDEBAR COLUMN (Right - 4 Cols) --- */}
-              <div className="col-span-1 lg:col-span-4 space-y-6">
-                
-                {/* 1. Quick Actions Card */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
-                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Quick Actions</h3>
-                     <div className="grid grid-cols-2 gap-3">
-                         <button onClick={() => setIsFAQModalOpen(true)} className="flex flex-col items-center justify-center p-3 rounded-lg border border-gray-100 hover:bg-blue-50 hover:border-blue-100 transition-all group">
-                             <QuestionMarkCircleIcon />
-                             <span className="text-sm font-medium text-gray-600 group-hover:text-blue-600 mt-1">FAQ</span>
-                         </button>
-                         {isWorkAdmin && (
-                            <button onClick={() => setIsAnnounceModalOpen(true)} className="flex flex-col items-center justify-center p-3 rounded-lg border border-green-100 bg-green-50/50 hover:bg-green-100 transition-all group">
+        {/* --- MAIN CONTENT AREA (Tasks List) --- */}
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-gray-50">
+            {isLoading ? <Spinner large /> : (
+                <>
+                    {/* Dynamic Header */}
+                    <div className="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-8 shadow-sm z-10">
+                        <div>
+                             <h2 className="text-xl font-bold text-gray-800">
+                                 {selectedProjectId === null ? 'All Tasks Overview' : 
+                                  selectedProjectId === 'my_tasks' ? 'My Assigned Tasks' :
+                                  projects.find(p => p.id === selectedProjectId)?.title || 'Project Tasks'}
+                             </h2>
+                             <p className="text-xs text-gray-500">
+                                 {selectedProjectId === null ? `Viewing tasks from all ${projects.length} projects` : 
+                                  selectedProjectId === 'my_tasks' ? 'Tasks assigned specifically to you' :
+                                  'Viewing project specific tasks'}
+                             </p>
+                        </div>
+                        
+                        {/* Quick Action: New Announcement */}
+                        {isWorkAdmin && (
+                            <button onClick={() => setIsAnnounceModalOpen(true)} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 rounded-full border border-green-200 hover:bg-green-100">
                                 <MegaphoneIcon />
-                                <span className="text-sm font-medium text-green-700 mt-1">Update</span>
+                                <span>Announce</span>
                             </button>
-                         )}
-                     </div>
-                </div>
+                        )}
+                    </div>
 
-                {/* 2. Announcements */}
-                <div className="h-[400px]">
-                    <AnnouncementsSection teamId={teamId} refreshTrigger={announcementRefreshKey} isAdmin={isWorkAdmin} onEdit={(u) => toggleModal('edit', true, u)} />
-                </div>
-
-                {/* 3. Members */}
-                <div className="h-[400px]">
-                    <MembersSection membersDetails={membersDetails} teamData={teamData} canManageMembers={isWorkAdmin} onChangeRole={changeRole} onInviteClick={() => setIsInviteModalOpen(true)} />
-                </div>
-
-              </div>
-            </div>
-          )}
+                    {/* Main Workspace: HandoversSection now acts as Task Board */}
+                    <div className="flex-1 overflow-hidden p-6">
+                        {error && <div className="p-4 bg-red-50 text-red-600 rounded mb-4">{error}</div>}
+                        
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-full flex flex-col">
+                             <HandoversSection 
+                                teamId={teamId} 
+                                membersDetails={membersDetails}
+                                isTeamCreator={isTeamCreator}
+                                currentUserUid={currentUser?.uid}
+                                selectedProjectId={selectedProjectId} // Passing the selection down
+                             />
+                        </div>
+                    </div>
+                </>
+            )}
         </div>
+
       </div>
 
+      {/* --- MODALS --- */}
       {isFAQModalOpen && (<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60"><div className="bg-white rounded-lg shadow-xl w-full max-w-6xl h-[85vh] relative"><button onClick={() => setIsFAQModalOpen(false)} className="absolute top-4 right-4"><XIcon /></button><div className="flex-1 overflow-hidden"><FAQSection teamId={teamId} isAdmin={isWorkAdmin} /></div></div></div>)}
+      
+      {/* View Announcements Modal */}
+      {isViewAnnounceModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
+              <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl h-[70vh] relative flex flex-col overflow-hidden">
+                  <button onClick={() => setIsViewAnnounceModalOpen(false)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-700 z-10"><XIcon /></button>
+                  <div className="flex-1 overflow-hidden">
+                      <AnnouncementsSection teamId={teamId} isAdmin={isWorkAdmin} onEdit={(u) => toggleModal('edit', true, u)} />
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* MEMBERS LIST MODAL */}
+      <MembersListModal 
+          isOpen={isMembersListOpen}
+          onClose={() => setIsMembersListOpen(false)}
+          members={membersDetails}
+          onInvite={() => setIsInviteModalOpen(true)}
+      />
+
+      {/* ADD PROJECT MODAL (Now triggered from Sidebar) */}
+      <AddEndorsementModal
+        isOpen={isAddProjectModalOpen}
+        onClose={() => setIsAddProjectModalOpen(false)}
+        teamId={teamId}
+        t={t}
+        categoriesList={categoriesList || ['General']}
+        membersList={membersDetails.map(m => ({ uid: m.uid, label: m.displayName || m.email }))}
+        onEndorsementAdded={() => setIsAddProjectModalOpen(false)}
+      />
+
       <InviteMemberModal t={t} isOpen={isInviteModalOpen} onClose={() => setIsInviteModalOpen(false)} teamId={teamId} />
       <AnnounceModal t={t} isOpen={isAnnounceModalOpen} onClose={() => setIsAnnounceModalOpen(false)} teamId={teamId} onAnnouncementPosted={() => setAnnouncementRefreshKey(k=>k+1)} />
       {isEditModalOpen && <EditUpdateModal t={t} isOpen={isEditModalOpen} onClose={() => toggleModal('edit', false)} teamId={teamId} updateId={editTarget?.id} updateType={editTarget?.type} initialData={editTarget} onSaved={() => setAnnouncementRefreshKey(k=>k+1)} />}

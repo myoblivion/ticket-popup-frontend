@@ -1,494 +1,236 @@
-// src/components/CreateTaskModal.js
-import React, { useState, useEffect, useCallback } from 'react';
+// src/components/CreateTaskModal.jsx
+import React, { useState, useRef } from 'react';
 import { db, auth } from '../firebaseConfig';
-import {
-  collection,
-  addDoc,
-  serverTimestamp,
-  doc,
-  getDoc,
-  updateDoc,
-  arrayUnion,
-  setDoc,
-  query,      
-  orderBy,    
-  limit,      
-  getDocs     
-} from 'firebase/firestore';
-import Spinner from './Spinner';
-import InviteMemberModal from './InviteMemberModal';
+import { doc, updateDoc, arrayUnion } from 'firebase/firestore';
 
-const CreateTaskModal = ({
-  isOpen,
-  onClose,
-  teamId,
-  onTaskCreated,
-  categoriesList = [],
-  typesList = [], 
-  priorityOptions = ['High', 'Medium', 'Low'],
-  statusOptions = ['Not started', 'In progress', 'QA', 'Complete'],
-  membersList = [] 
-}) => {
-  // --- Form State ---
+// --- Icons ---
+const PaperClipIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>;
+const LinkIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>;
+const UserAddIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" /></svg>;
+const XIcon = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>;
+
+const CreateTaskModal = ({ isOpen, onClose, teamId, projectId, membersDetails = [] }) => {
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('Medium');
-  const [category, setCategory] = useState('');
-  const [newCategory, setNewCategory] = useState('');
-  const [type, setType] = useState('');
-  const [newType, setNewType] = useState('');
-  const [status, setStatus] = useState('Not started');
-  const [ticketNo, setTicketNo] = useState(''); 
-  const [company, setCompany] = useState('');
-  const [inquiryDetails, setInquiryDetails] = useState('');
-  const [csManager, setCsManager] = useState('');
-  const [qaManager, setQaManager] = useState('');
-  const [developer, setDeveloper] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [isLoadingTicket, setIsLoadingTicket] = useState(false); 
+  const [assignees, setAssignees] = useState([]);
   
-  // NEW: Control whether the user can type the ticket number manually
-  const [isTicketEditable, setIsTicketEditable] = useState(false); 
-
-  // --- Invite Modal State ---
-  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
-  const [inviteMeta, setInviteMeta] = useState(null);
-
-  // --- Set default status ---
-  useEffect(() => {
-    if (statusOptions && statusOptions.length > 0) {
-      setStatus(statusOptions[0]); 
-    }
-  }, [statusOptions]);
-
-  // --- Set default priority ---
-  useEffect(() => {
-    if (priorityOptions && priorityOptions.length > 0) {
-      const defaultPriority = priorityOptions.includes('Medium') ? 'Medium' : priorityOptions[0];
-      setPriority(defaultPriority);
-    }
-  }, [priorityOptions]);
-
-  // --- AUTO-GENERATE TICKET NUMBER LOGIC ---
-  useEffect(() => {
-    const fetchNextTicketNumber = async () => {
-        if (!isOpen || !teamId) return;
-        
-        setIsLoadingTicket(true);
-        // Default assumption: Locked until we find it's empty
-        setIsTicketEditable(false);
-
-        try {
-            const tasksRef = collection(db, `teams/${teamId}/tasks`);
-            // Get absolute latest created task to check format
-            const q = query(tasksRef, orderBy('createdAt', 'desc'), limit(1));
-            const querySnapshot = await getDocs(q);
-
-            if (querySnapshot.empty) {
-                // CASE: FIRST RECORD EVER
-                // Enable input so user can define the pattern (e.g. "T-001" or "1000")
-                setTicketNo('');
-                setIsTicketEditable(true);
-            } else {
-                // CASE: RECORDS EXIST -> Auto-Increment based on previous pattern
-                const latestTask = querySnapshot.docs[0].data();
-                const prevTicket = latestTask.ticketNo || '';
-
-                // Regex to find the LAST number sequence in a string
-                // Works for: "T-018" -> "018", "t02x" -> "02", "100" -> "100"
-                const numberPattern = /(\d+)(?!.*\d)/;
-                const match = prevTicket.match(numberPattern);
-
-                if (match) {
-                    const fullMatch = match[0]; // e.g., "018"
-                    const index = match.index;
-
-                    // 1. Parse Number
-                    const currentNumVal = parseInt(fullMatch, 10);
-                    
-                    // 2. Increment
-                    const nextNumVal = currentNumVal + 1;
-
-                    // 3. Preserve Padding (e.g. length 3 => "019")
-                    const originalLength = fullMatch.length;
-                    const nextNumStr = String(nextNumVal).padStart(originalLength, '0');
-
-                    // 4. Reconstruct (Prefix + NewNumber + Suffix)
-                    const prefix = prevTicket.substring(0, index);
-                    const suffix = prevTicket.substring(index + fullMatch.length);
-
-                    setTicketNo(`${prefix}${nextNumStr}${suffix}`);
-                    setIsTicketEditable(false); // Keep locked to maintain pattern
-                } else {
-                    // Fallback: Previous ticket had no numbers? Let user type.
-                    setTicketNo(prevTicket); 
-                    setIsTicketEditable(true);
-                }
-            }
-
-        } catch (err) {
-            console.error("Error fetching next ticket number:", err);
-            setIsTicketEditable(true); // Fail safe: let user type
-        } finally {
-            setIsLoadingTicket(false);
-        }
-    };
-
-    fetchNextTicketNumber();
-  }, [isOpen, teamId]);
-
-
-  // --- Helper function to save new options ---
-  const saveNewOptionToTeam = useCallback(async (fieldName, newLabel) => {
-    if (!teamId || !fieldName || !newLabel || !newLabel.trim()) {
-      throw new Error('Invalid parameters for saving new option.');
-    }
-    const teamDocRef = doc(db, 'teams', teamId);
-    const normalized = newLabel.trim();
-
-    let firestoreField = '';
-    if (fieldName === 'category') firestoreField = 'categories';
-    else if (fieldName === 'type') firestoreField = 'types';
-    else {
-      return; 
-    }
-
-    try {
-      await updateDoc(teamDocRef, { [firestoreField]: arrayUnion(normalized) });
-    } catch (err) {
-      if (err.code === 'not-found' || err.message?.includes('No document to update')) {
-        try {
-          await setDoc(teamDocRef, { [firestoreField]: [normalized] }, { merge: true });
-        } catch (setErr) {
-          console.error(`Error setting new field ${firestoreField}:`, setErr);
-          throw setErr; 
-        }
-      } else {
-        console.error(`Error updating field ${firestoreField} with arrayUnion:`, err);
-        throw err; 
-      }
-    }
-  }, [teamId]);
-
+  // Attachments
+  const [images, setImages] = useState([]); 
+  const [files, setFiles] = useState([]);
+  const [links, setLinks] = useState([]);
+  const [linkInput, setLinkInput] = useState('');
+  
+  const [isAssigneeOpen, setIsAssigneeOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isOpen) return null;
 
+  const processPaste = (e) => {
+      const items = e.clipboardData.items;
+      for (let i = 0; i < items.length; i++) {
+          if (items[i].type.indexOf("image") !== -1) {
+              const blob = items[i].getAsFile();
+              const reader = new FileReader();
+              reader.onload = (evt) => setImages(prev => [...prev, evt.target.result]);
+              reader.readAsDataURL(blob);
+          }
+      }
+  };
 
-  const resetForm = () => {
-    setPriority(priorityOptions.includes('Medium') ? 'Medium' : priorityOptions[0] || 'Medium');
-    setCategory('');
-    setNewCategory('');
-    setType('');
-    setNewType('');
-    setStatus(statusOptions[0] || 'Not started');
-    setTicketNo(''); 
-    setCompany('');
-    setInquiryDetails('');
-    setCsManager('');
-    setQaManager('');
-    setDeveloper('');
-    setStartDate('');
-    setEndDate('');
-    setError('');
-    setIsSaving(false);
+  const handleFileUpload = (e) => {
+      const selected = Array.from(e.target.files);
+      selected.forEach(file => {
+          const reader = new FileReader();
+          reader.onload = (evt) => {
+              setFiles(prev => [...prev, { name: file.name, data: evt.target.result, type: file.type }]);
+          };
+          reader.readAsDataURL(file);
+      });
+  };
+
+  const handleAddLink = () => {
+      if (linkInput.trim()) {
+          setLinks(prev => [...prev, linkInput.trim()]);
+          setLinkInput('');
+      }
+  };
+
+  const toggleAssignee = (uid) => {
+      setAssignees(prev => prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]);
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setIsSaving(true);
-    setError('');
+      e.preventDefault();
+      if (!title.trim() || !projectId) return;
+      setIsSubmitting(true);
 
-    if (!inquiryDetails.trim()) {
-      setError('Inquiry Details are required.');
-      setIsSaving(false);
-      return;
-    }
+      const newTask = {
+          id: Date.now().toString(),
+          title,
+          description,
+          priority,
+          status: 'Open',
+          assignedTo: assignees,
+          images,
+          files,
+          links,
+          createdAt: new Date().toISOString()
+      };
 
-    const finalCategory = newCategory.trim() || category;
-    const finalType = newType.trim() || type;
-
-    if (!finalCategory) {
-       setError('Category is required.');
-       setIsSaving(false);
-       return;
-    }
-    
-    try {
-      if (newCategory.trim()) {
-        await saveNewOptionToTeam('category', newCategory.trim());
+      try {
+          const docRef = doc(db, 'teams', teamId, 'handovers', projectId);
+          await updateDoc(docRef, { projectTasks: arrayUnion(newTask) });
+          onClose();
+          // Reset fields
+          setTitle(''); setDescription(''); setPriority('Medium'); setAssignees([]); setImages([]); setFiles([]); setLinks([]);
+      } catch (err) {
+          console.error("Error creating task:", err);
+          alert("Failed to create task");
+      } finally {
+          setIsSubmitting(false);
       }
-      if (newType.trim()) {
-        await saveNewOptionToTeam('type', newType.trim());
-      }
-
-      const tasksCollectionRef = collection(db, `teams/${teamId}/tasks`);
-      await addDoc(tasksCollectionRef, {
-        priority,
-        category: finalCategory,
-        type: finalType,
-        status,
-        ticketNo: ticketNo.trim(), 
-        company: company.trim(),
-        inquiryDetails: inquiryDetails.trim(),
-        csManager: csManager, 
-        qaManager: qaManager, 
-        developer: developer, 
-        startDate: startDate ? startDate : null, 
-        endDate: endDate ? endDate : null, 
-        createdAt: serverTimestamp(),
-        createdBy: auth.currentUser?.uid || null
-      });
-
-      resetForm();
-      onClose();
-      if (onTaskCreated) onTaskCreated(); 
-    } catch (err) {
-      console.error("Error adding task or saving new option:", err);
-      setError("Failed to create task. Please try again.");
-      setIsSaving(false);
-    }
-  };
-
-  const renderMemberOptions = () => (
-    <>
-      <option value="">Select Member</option>
-      {membersList.map(m => (
-        <option key={m.uid} value={m.uid}>{m.label}</option>
-      ))}
-      <option value="__INVITE_USER__">-- Add new user... --</option>
-    </>
-  );
-
-  const handleMemberSelectChange = (value, setter) => {
-    if (value === '__INVITE_USER__') {
-      setInviteMeta({ onInvite: setter });
-      setIsInviteModalOpen(true);
-    } else {
-      setter(value);
-    }
-  };
-
-  const handleInviteCompleted = async (invitedUid, invitedLabel) => {
-    try {
-      const teamDocRef = doc(db, 'teams', teamId);
-      await updateDoc(teamDocRef, {
-        members: arrayUnion({ uid: invitedUid, label: invitedLabel })
-      });
-    } catch (err) {
-      console.error("Failed to add new member to team:", err);
-    }
-
-    if (inviteMeta && typeof inviteMeta.onInvite === 'function') {
-      inviteMeta.onInvite(invitedUid);
-    }
-
-    setIsInviteModalOpen(false);
-    setInviteMeta(null);
-  };
-
-  const handleInviteCanceled = () => {
-    setIsInviteModalOpen(false);
-    setInviteMeta(null);
   };
 
   return (
-    <>
-      <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4 overflow-y-auto">
-        <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl transform transition-all max-h-[90vh] flex flex-col">
-          {/* Header */}
-          <div className="flex justify-between items-center p-5 border-b sticky top-0 bg-white z-10">
-            <h3 className="text-xl font-semibold text-gray-800">Create New Project Task</h3>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-2xl focus:outline-none"
-              aria-label="Close modal"
-              disabled={isSaving}
-            >
-              &times;
-            </button>
-          </div>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        
+        {/* Header */}
+        <div className="flex justify-between items-center px-6 py-4 border-b">
+             <h2 className="text-xl font-bold text-gray-800">Create New Task</h2>
+             <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><XIcon /></button>
+        </div>
 
-          {/* Form Body - Scrollable */}
-          <form id="create-task-form" onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
-            {error && <p className="text-red-600 bg-red-100 p-3 rounded-md text-sm">{error}</p>}
-
-            {/* Priority Radio */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
-              <div className="flex gap-4">
-                {priorityOptions.map(p => (
-                  <label key={p} className="flex items-center space-x-2">
-                    <input type="radio" name="priority" value={p} checked={priority === p} onChange={(e) => setPriority(e.target.value)} className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300"/>
-                    <span>{p}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Category */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="category" className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-                <select id="category" value={category} onChange={e => { setCategory(e.target.value); if(e.target.value !== 'CREATE_NEW') setNewCategory(''); }} className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500 bg-white">
-                  <option value="">Select Category</option>
-                  {categoriesList.map(c => <option key={c} value={c}>{c}</option>)}
-                  <option value="CREATE_NEW">-- Create New --</option>
-                </select>
-              </div>
-              {category === 'CREATE_NEW' && (
-                <div>
-                  <label htmlFor="newCategory" className="block text-sm font-medium text-gray-700 mb-1">New Category Name</label>
-                  <input type="text" id="newCategory" value={newCategory} onChange={e => setNewCategory(e.target.value)} className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., New UI" required/>
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <form id="create-task-form" onSubmit={handleSubmit} className="flex flex-col gap-6">
+                
+                {/* Title & Priority */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="md:col-span-2">
+                        <label className="block text-xs font-bold text-gray-600 mb-1 uppercase">Task Name</label>
+                        <input className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" placeholder="e.g. Fix Homepage Banner" value={title} onChange={e => setTitle(e.target.value)} autoFocus />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-gray-600 mb-1 uppercase">Priority</label>
+                        <select className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white" value={priority} onChange={e => setPriority(e.target.value)}>
+                            <option value="High">High Priority</option>
+                            <option value="Medium">Medium</option>
+                            <option value="Low">Low</option>
+                        </select>
+                    </div>
                 </div>
-              )}
-            </div>
 
-            {/* Type */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="type" className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-                <select id="type" value={type} onChange={e => { setType(e.target.value); if(e.target.value !== 'CREATE_NEW') setNewType(''); }} className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500 bg-white">
-                  <option value="">Select Type</option>
-                  {typesList.map(t => <option key={t} value={t}>{t}</option>)}
-                  <option value="CREATE_NEW">-- Create New --</option>
-                </select>
-              </div>
-              {type === 'CREATE_NEW' && (
+                {/* Description */}
                 <div>
-                  <label htmlFor="newType" className="block text-sm font-medium text-gray-700 mb-1">New Type Name</label>
-                  <input type="text" id="newType" value={newType} onChange={e => setNewType(e.target.value)} className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500" placeholder="e.g., Mobile View" required/>
-                </div>
-              )}
-            </div>
-
-            {/* Status */}
-            <div>
-              <label htmlFor="status" className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-              <select id="status" value={status} onChange={e => setStatus(e.target.value)} className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500 bg-white">
-                {statusOptions.map(s => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Ticket # & Company */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="ticketNo" className="block text-sm font-medium text-gray-700 mb-1">
-                    Ticket # 
-                    {isTicketEditable && <span className="text-xs text-blue-500 font-normal ml-2">(Define format)</span>}
-                    {!isTicketEditable && <span className="text-xs text-gray-400 font-normal ml-2">(Auto-generated)</span>}
-                </label>
-                <div className="relative">
-                    <input 
-                        type="text" 
-                        id="ticketNo" 
-                        value={ticketNo} 
-                        onChange={(e) => setTicketNo(e.target.value)}
-                        readOnly={!isTicketEditable} // <-- DYNAMICALLY LOCKED
-                        placeholder={isTicketEditable ? "e.g. T-001" : ""}
-                        className={`w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500 ${!isTicketEditable ? 'bg-gray-100 text-gray-600 cursor-not-allowed' : 'bg-white'}`}
+                    <label className="block text-xs font-bold text-gray-600 mb-1 uppercase">Description</label>
+                    <textarea 
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 bg-gray-50 placeholder-gray-400"
+                        placeholder="Detailed description... (You can paste screenshots directly here)"
+                        value={description}
+                        onChange={e => setDescription(e.target.value)}
+                        onPaste={processPaste}
                     />
-                    {isLoadingTicket && (
-                        <div className="absolute right-2 top-2">
-                            <Spinner />
+                </div>
+
+                {/* Attachments Section */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                    
+                    {/* Files */}
+                    <div>
+                        <label className="block text-xs font-bold text-gray-600 mb-2 uppercase flex items-center gap-1">
+                            <PaperClipIcon /> Upload Files
+                        </label>
+                        <label className="flex flex-col items-center justify-center w-full h-20 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer hover:bg-white transition">
+                            <span className="text-[10px] text-gray-500">Click to upload</span>
+                            <input type="file" multiple className="hidden" onChange={handleFileUpload} />
+                        </label>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                             {images.map((img, i) => (
+                                 <div key={i} className="relative w-10 h-10 border rounded overflow-hidden">
+                                     <img src={img} className="w-full h-full object-cover" />
+                                     <button type="button" onClick={() => setImages(p => p.filter((_,x)=>x!==i))} className="absolute inset-0 bg-black/40 text-white flex items-center justify-center opacity-0 hover:opacity-100 text-xs">x</button>
+                                 </div>
+                             ))}
+                             {files.map((f, i) => (
+                                 <div key={i} className="flex items-center bg-white px-2 py-1 rounded border text-[10px] gap-2">
+                                     <span className="truncate max-w-[60px]">{f.name}</span>
+                                     <button type="button" onClick={() => setFiles(p => p.filter((_,x)=>x!==i))} className="text-red-500 font-bold">x</button>
+                                 </div>
+                             ))}
+                        </div>
+                    </div>
+
+                    {/* Links */}
+                    <div>
+                        <label className="block text-xs font-bold text-gray-600 mb-2 uppercase flex items-center gap-1">
+                            <LinkIcon /> External Links
+                        </label>
+                        <div className="flex gap-2 mb-2">
+                            <input className="flex-1 border rounded text-xs px-2 py-1" placeholder="https://" value={linkInput} onChange={e => setLinkInput(e.target.value)} />
+                            <button type="button" onClick={handleAddLink} className="bg-gray-200 px-3 py-1 rounded text-xs font-bold hover:bg-gray-300">Add</button>
+                        </div>
+                        <div className="space-y-1 max-h-20 overflow-y-auto">
+                            {links.map((l, i) => (
+                                <div key={i} className="flex justify-between items-center text-[10px] bg-white px-2 py-1 rounded border">
+                                    <span className="truncate flex-1 text-blue-600">{l}</span>
+                                    <button type="button" onClick={() => setLinks(p => p.filter((_,x)=>x!==i))} className="text-red-500 ml-2">x</button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                {/* Custom Assignee Dropdown */}
+                <div className="relative">
+                    <label className="block text-xs font-bold text-gray-600 mb-1 uppercase flex items-center gap-1">
+                        <UserAddIcon /> Assign To
+                    </label>
+                    <div 
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm cursor-pointer hover:border-blue-400 bg-white flex items-center justify-between"
+                        onClick={() => setIsAssigneeOpen(!isAssigneeOpen)}
+                    >
+                        <span className={assignees.length ? 'text-gray-800 font-medium' : 'text-gray-400'}>
+                            {assignees.length === 0 ? 'Select Team Members' : `${assignees.length} members selected`}
+                        </span>
+                        <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </div>
+                    
+                    {isAssigneeOpen && (
+                        <div className="absolute z-10 top-full left-0 w-full bg-white border border-gray-200 shadow-xl rounded-lg mt-1 max-h-48 overflow-y-auto">
+                            {membersDetails.map(m => (
+                                <label key={m.uid} className="flex items-center gap-3 p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-50 last:border-0 transition-colors">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={assignees.includes(m.uid)} 
+                                        onChange={() => toggleAssignee(m.uid)} 
+                                        className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                                    />
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-[10px] text-blue-700 font-bold">
+                                            {(m.displayName || m.email)[0].toUpperCase()}
+                                        </div>
+                                        <span className="text-sm text-gray-700">{m.displayName || m.email}</span>
+                                    </div>
+                                </label>
+                            ))}
                         </div>
                     )}
                 </div>
-              </div>
-              <div>
-                <label htmlFor="company" className="block text-sm font-medium text-gray-700 mb-1">Company</label>
-                <input type="text" id="company" value={company} onChange={e => setCompany(e.target.value)} className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500"/>
-              </div>
-            </div>
 
-            {/* Inquiry Details */}
-            <div>
-              <label htmlFor="inquiryDetails" className="block text-sm font-medium text-gray-700 mb-1">Inquiry Details *</label>
-              <textarea id="inquiryDetails" value={inquiryDetails} onChange={e => setInquiryDetails(e.target.value)} rows="3" className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500" required/>
-            </div>
+            </form>
+        </div>
 
-            {/* Assignees (CS, QA, Dev) */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label htmlFor="csManager" className="block text-sm font-medium text-gray-700 mb-1">CS Manager</label>
-                <select
-                  id="csManager"
-                  value={csManager}
-                  onChange={e => handleMemberSelectChange(e.target.value, setCsManager)}
-                  className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500 bg-white mb-1"
-                >
-                  {renderMemberOptions()}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="qaManager" className="block text-sm font-medium text-gray-700 mb-1">QA Manager</label>
-                <select
-                  id="qaManager"
-                  value={qaManager}
-                  onChange={e => handleMemberSelectChange(e.target.value, setQaManager)}
-                  className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500 bg-white mb-1"
-                >
-                  {renderMemberOptions()}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="developer" className="block text-sm font-medium text-gray-700 mb-1">Developer</label>
-                <select
-                  id="developer"
-                  value={developer}
-                  onChange={e => handleMemberSelectChange(e.target.value, setDeveloper)}
-                  className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500 bg-white mb-1"
-                >
-                  {renderMemberOptions()}
-                </select>
-              </div>
-            </div>
-
-            {/* Dates */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label htmlFor="startDate" className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-                <input type="date" id="startDate" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500"/>
-              </div>
-              <div>
-                <label htmlFor="endDate" className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-                <input type="date" id="endDate" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full p-2 border rounded focus:ring-blue-500 focus:border-blue-500"/>
-              </div>
-            </div>
-
-          </form>
-
-          {/* Footer - Sticky */}
-          <div className="flex items-center justify-end p-6 border-t sticky bottom-0 bg-white z-10">
-            <button type="button" onClick={onClose} disabled={isSaving} className="px-5 py-2.5 text-sm font-medium text-gray-500 bg-white rounded-lg border border-gray-200 hover:bg-gray-100 focus:ring-4 focus:outline-none focus:ring-blue-300 hover:text-gray-900 focus:z-10 mr-2 disabled:opacity-50">
-              Cancel
-            </button>
-            <button
-              type="submit" // Triggers the form
-              form="create-task-form" // Links to the form by its ID
-              disabled={isSaving || isLoadingTicket} // Disable if still fetching ticket #
-              className="px-5 py-2.5 text-sm font-medium text-white bg-blue-700 rounded-lg hover:bg-blue-800 focus:ring-4 focus:outline-none focus:ring-blue-300 disabled:opacity-50 inline-flex items-center"
-            >
-              {isSaving && <Spinner />}
-              {isSaving ? 'Creating...' : 'Create Task'}
-            </button>
-          </div>
+        {/* Footer */}
+        <div className="flex justify-end gap-3 px-6 py-4 border-t bg-gray-50 rounded-b-xl">
+             <button onClick={onClose} className="px-5 py-2 text-sm text-gray-600 hover:bg-white rounded-lg border border-transparent hover:border-gray-200 font-medium transition-all">Cancel</button>
+             <button type="submit" form="create-task-form" disabled={isSubmitting} className="px-6 py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-500/30 disabled:opacity-50">
+                 {isSubmitting ? 'Creating...' : 'Create Task'}
+             </button>
         </div>
       </div>
-
-      {/* Render the Invite Member Modal */}
-      {isInviteModalOpen && (
-        <InviteMemberModal
-          isOpen={isInviteModalOpen}
-          onClose={handleInviteCanceled}
-          teamId={teamId}
-          onInvited={handleInviteCompleted} // Pass the correct callback
-        />
-      )}
-    </>
+    </div>
   );
 };
 
