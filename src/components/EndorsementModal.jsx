@@ -18,16 +18,9 @@ const XIcon = () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" str
 // --- Manage Project Members Modal ---
 const ManageProjectMembersModal = ({ isOpen, onClose, currentMembers = [], allMembers = [], onSave, isSaving }) => {
     const [selected, setSelected] = useState([]);
-
-    useEffect(() => {
-        if (isOpen) setSelected(currentMembers || []);
-    }, [isOpen, currentMembers]);
-
+    useEffect(() => { if (isOpen) setSelected(currentMembers || []); }, [isOpen, currentMembers]);
     if (!isOpen) return null;
-
-    const toggleMember = (uid) => {
-        setSelected(prev => prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]);
-    };
+    const toggleMember = (uid) => setSelected(prev => prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]);
 
     return (
         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
@@ -43,9 +36,7 @@ const ManageProjectMembersModal = ({ isOpen, onClose, currentMembers = [], allMe
                             return (
                                 <label key={m.uid} className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer border transition-colors ${isSelected ? 'bg-blue-50 border-blue-200' : 'bg-white border-transparent hover:bg-gray-50'}`}>
                                     <input type="checkbox" checked={isSelected} onChange={() => toggleMember(m.uid)} className="rounded text-blue-600 focus:ring-blue-500" />
-                                    <div className="flex-1">
-                                        <p className={`text-sm font-medium ${isSelected ? 'text-blue-800' : 'text-gray-700'}`}>{m.displayName || m.email}</p>
-                                    </div>
+                                    <div className="flex-1"><p className={`text-sm font-medium ${isSelected ? 'text-blue-800' : 'text-gray-700'}`}>{m.displayName || m.email}</p></div>
                                 </label>
                             );
                         })}
@@ -53,9 +44,7 @@ const ManageProjectMembersModal = ({ isOpen, onClose, currentMembers = [], allMe
                 </div>
                 <div className="p-4 border-t bg-gray-50 flex justify-end gap-2">
                     <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-white rounded-lg">Cancel</button>
-                    <button onClick={() => onSave(selected)} disabled={isSaving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-sm disabled:opacity-50">
-                        {isSaving ? 'Saving...' : 'Save Changes'}
-                    </button>
+                    <button onClick={() => onSave(selected)} disabled={isSaving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-sm disabled:opacity-50">{isSaving ? 'Saving...' : 'Save Changes'}</button>
                 </div>
             </div>
         </div>
@@ -67,8 +56,6 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
   const [tasks, setTasks] = useState([]); 
   const [loading, setLoading] = useState(true);
   const [activeSessions, setActiveSessions] = useState([]);
-  
-  // New State for Project Metadata
   const [currentProject, setCurrentProject] = useState(null);
 
   // --- FILTER STATES ---
@@ -83,6 +70,7 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
   const [isCreateTaskModalOpen, setIsCreateTaskModalOpen] = useState(false);
   const [isManageMembersModalOpen, setIsManageMembersModalOpen] = useState(false);
   const [isSavingMembers, setIsSavingMembers] = useState(false);
+  const [taskToEdit, setTaskToEdit] = useState(null);
 
   const resolveName = (uid) => {
     if (!uid) return 'Unknown';
@@ -100,19 +88,16 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
     if (!teamId) return;
     setLoading(true);
     setTasks([]);
-    setCurrentProject(null); // Reset current project
+    setCurrentProject(null);
 
     let unsub;
 
     if (selectedProjectId && selectedProjectId !== 'my_tasks') {
-        // Single Project View
         const docRef = doc(db, `teams/${teamId}/handovers`, selectedProjectId);
         unsub = onSnapshot(docRef, (docSnap) => {
             if (docSnap.exists()) {
                 const data = docSnap.data();
-                // Store full project data
                 setCurrentProject({ id: docSnap.id, ...data });
-
                 const rawTasks = data.projectTasks || [];
                 const mapped = rawTasks.map(task => ({
                     ...task,
@@ -122,14 +107,10 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
                     projectCreator: data.postedBy 
                 }));
                 setTasks(mapped);
-            } else {
-                setTasks([]);
-                setCurrentProject(null);
-            }
+            } else { setTasks([]); setCurrentProject(null); }
             setLoading(false);
         });
     } else {
-        // All Projects View
         const q = query(collection(db, `teams/${teamId}/handovers`), orderBy('createdAt', 'desc'));
         unsub = onSnapshot(q, (snapshot) => {
             let allTasks = [];
@@ -145,6 +126,7 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
                 }));
                 allTasks = [...allTasks, ...mapped];
             });
+            // If "My Tasks", filter. If "All Tasks", show everything regardless of assignment.
             if (selectedProjectId === 'my_tasks') {
                 allTasks = allTasks.filter(t => Array.isArray(t.assignedTo) && t.assignedTo.includes(currentUserUid));
             }
@@ -155,7 +137,6 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
     return () => { if(unsub) unsub(); };
   }, [teamId, selectedProjectId, currentUserUid]);
 
-  // Fetch Active Logs
   useEffect(() => {
     if (!teamId) return;
     const q = query(collection(db, `teams/${teamId}/workLogs`), where('status', '==', 'active'));
@@ -171,12 +152,7 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
           const docRef = doc(db, `teams/${teamId}/handovers`, currentProject.id);
           await updateDoc(docRef, { assignees: newMembers });
           setIsManageMembersModalOpen(false);
-      } catch (err) {
-          console.error("Error updating members:", err);
-          alert("Failed to update project members.");
-      } finally {
-          setIsSavingMembers(false);
-      }
+      } catch (err) { alert("Failed to update project members."); } finally { setIsSavingMembers(false); }
   };
 
   const handleDeleteTask = async (e, task) => {
@@ -193,19 +169,10 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
       } catch (err) { console.error(err); }
   };
 
-  const handleEditTask = async (e, task) => {
+  const handleEditTask = (e, task) => {
       e.stopPropagation();
-      const newTitle = window.prompt("Edit Task Title:", task.title);
-      if (!newTitle || newTitle === task.title) return;
-      try {
-          const projectRef = doc(db, `teams/${teamId}/handovers`, task.projectId);
-          const snap = await getDoc(projectRef);
-          if (snap.exists()) {
-              const currentTasks = snap.data().projectTasks || [];
-              const updatedTasks = currentTasks.map(t => t.id === task.id ? { ...t, title: newTitle } : t);
-              await updateDoc(projectRef, { projectTasks: updatedTasks });
-          }
-      } catch (err) { console.error(err); }
+      setTaskToEdit(task);
+      setIsCreateTaskModalOpen(true);
   };
 
   const openCreateModal = () => {
@@ -213,10 +180,10 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
           alert("Please select a specific Project from the sidebar first to add a task.");
           return;
       }
+      setTaskToEdit(null);
       setIsCreateTaskModalOpen(true);
   };
 
-  // --- FILTERING ---
   const filteredTasks = tasks.filter(task => {
       if (filterStatus && task.status !== filterStatus) return false;
       if (filterPriority && task.priority !== filterPriority) return false;
@@ -246,39 +213,22 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
 
   return (
     <div className="flex flex-col h-full bg-white rounded-lg">
-      
-      {/* --- FILTER BAR & ACTIONS --- */}
       <div className="p-4 border-b border-gray-200 flex flex-wrap gap-3 items-center bg-gray-50/50 rounded-t-lg">
-          <div className="flex-1 min-w-[200px]">
-              <input type="text" placeholder="Search tasks, descriptions..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" />
-          </div>
+          <div className="flex-1 min-w-[200px]"><input type="text" placeholder="Search tasks, descriptions..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="w-full border border-gray-300 rounded-md px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-blue-500" /></div>
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white"><option value="">All Statuses</option><option value="Open">Open</option><option value="In Progress">In Progress</option><option value="QA">QA</option><option value="Revision">Revision</option><option value="Completed">Completed</option></select>
           <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)} className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white"><option value="">All Priorities</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option></select>
           <select value={filterAssignee} onChange={e => setFilterAssignee(e.target.value)} className="border border-gray-300 rounded-md px-3 py-1.5 text-sm bg-white"><option value="">All Assignees</option>{membersDetails.map(m => <option key={m.uid} value={m.uid}>{m.displayName || m.email}</option>)}</select>
           
           <div className="flex items-center gap-2 border-l pl-3 ml-2 border-gray-300">
-              {/* Manage Project Members Button - Only visible in Single Project View */}
               {selectedProjectId && selectedProjectId !== 'my_tasks' && isTeamCreator && (
-                  <button 
-                    onClick={() => setIsManageMembersModalOpen(true)}
-                    className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded-md text-xs font-bold hover:bg-gray-50 transition shadow-sm"
-                    title="Manage Project Members"
-                  >
-                      <UserGroupIcon />
-                      <span className="hidden sm:inline">Members</span>
-                  </button>
+                  <button onClick={() => setIsManageMembersModalOpen(true)} className="flex items-center gap-2 bg-white border border-gray-300 text-gray-700 px-3 py-1.5 rounded-md text-xs font-bold hover:bg-gray-50 transition shadow-sm" title="Manage Project Members"><UserGroupIcon /><span className="hidden sm:inline">Members</span></button>
               )}
-
-              {/* Create Task Button */}
               {selectedProjectId && selectedProjectId !== 'my_tasks' && (
-                  <button onClick={openCreateModal} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-1.5 rounded-md text-sm font-bold hover:bg-blue-700 transition shadow-sm">
-                      <PlusIcon /> New Task
-                  </button>
+                  <button onClick={openCreateModal} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-1.5 rounded-md text-sm font-bold hover:bg-blue-700 transition shadow-sm"><PlusIcon /> New Task</button>
               )}
           </div>
       </div>
 
-      {/* --- TASK TABLE --- */}
       <div className="flex-1 overflow-auto p-0">
         <table className="min-w-full divide-y divide-gray-200">
            <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
@@ -287,7 +237,7 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Category</th>
                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Subject</th>
                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider w-1/4">Description</th>
-               <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Stage</th>
+               <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Status</th>
                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Priority</th>
                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Worker</th>
                <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Created</th>
@@ -298,20 +248,13 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
              {loading ? <tr><td colSpan="9" className="py-10 text-center"><div className="animate-spin h-5 w-5 border-2 border-blue-500 border-t-transparent rounded-full mx-auto"></div></td></tr> : filteredTasks.length === 0 ? <tr><td colSpan="9" className="text-center py-10 text-gray-400 italic">No tasks found. Select a project and click New Task.</td></tr> : (
                  filteredTasks.map((task, idx) => {
                      const isActive = activeSessions.some(s => s.taskId === task.id && s.status === 'active');
+                     // PERMISSION CHECK: Only Team Creator (Admin) OR Task Creator can edit/delete
+                     const canEdit = isTeamCreator || (task.createdBy && task.createdBy === currentUserUid);
+
                      return (
                          <tr key={`${task.id}-${idx}`} onClick={() => { setSelectedTaskContext({ handoverId: task.projectId, taskId: task.id }); setIsDetailsModalOpen(true); }} className={`hover:bg-blue-50/50 cursor-pointer transition-colors ${isActive ? 'bg-green-50' : ''}`}>
-                             
-                             {/* NO */}
                              <td className="px-6 py-4 text-gray-500 text-xs">{idx + 1}</td>
-
-                             {/* CATEGORY */}
-                             <td className="px-6 py-4">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
-                                    {task.category || 'General'}
-                                </span>
-                             </td>
-
-                             {/* SUBJECT (TITLE + PROJECT) */}
+                             <td className="px-6 py-4"><span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">{task.category || 'General'}</span></td>
                              <td className="px-6 py-4">
                                  <div className="flex flex-col">
                                      <div className="flex items-center gap-2">
@@ -321,53 +264,19 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
                                      <span className="text-[10px] text-gray-400 mt-1">Project: {task.projectTitle}</span>
                                  </div>
                              </td>
-
-                             {/* DESCRIPTION (NEW SEPARATE COLUMN) */}
-                             <td className="px-6 py-4">
-                                 <span className="text-xs text-gray-500 line-clamp-2" title={task.description}>
-                                     {task.description || '-'}
-                                 </span>
-                             </td>
-
-                             {/* STAGE */}
-                             <td className="px-6 py-4">
-                                 <span className={`px-2 py-1 rounded border text-xs font-bold uppercase ${getStatusColor(task.status)}`}>
-                                     {task.status || 'Open'}
-                                 </span>
-                             </td>
-
-                             {/* PRIORITY */}
-                             <td className="px-6 py-4">
-                                <span className={`text-xs font-bold ${task.priority === 'High' ? 'text-red-600' : task.priority === 'Low' ? 'text-gray-500' : 'text-blue-600'}`}>
-                                    {task.priority || 'Medium'}
-                                </span>
-                             </td>
-
-                             {/* WORKER (NAMES) */}
-                             <td className="px-6 py-4">
-                                 {Array.isArray(task.assignedTo) && task.assignedTo.length > 0 ? (
-                                     <div className="flex flex-col text-xs text-gray-700">
-                                         {task.assignedTo.map(uid => (
-                                             <span key={uid} className="truncate max-w-[150px]" title={resolveName(uid)}>
-                                                 {resolveName(uid)}
-                                             </span>
-                                         ))}
-                                     </div>
-                                 ) : <span className="text-xs text-gray-400 italic">Unassigned</span>}
-                             </td>
-
-                             {/* CREATED DATE */}
-                             <td className="px-6 py-4">
-                                 <div className="flex flex-col text-xs">
-                                     <span className="text-gray-600">{formatDate(task.createdAt)}</span>
-                                 </div>
-                             </td>
-
-                             {/* ACTIONS */}
+                             <td className="px-6 py-4"><span className="text-xs text-gray-500 line-clamp-2" title={task.description}>{task.description || '-'}</span></td>
+                             <td className="px-6 py-4"><span className={`px-2 py-1 rounded border text-xs font-bold uppercase ${getStatusColor(task.status)}`}>{task.status || 'Open'}</span></td>
+                             <td className="px-6 py-4"><span className={`text-xs font-bold ${task.priority === 'High' ? 'text-red-600' : task.priority === 'Low' ? 'text-gray-500' : 'text-blue-600'}`}>{task.priority || 'Medium'}</span></td>
+                             <td className="px-6 py-4">{Array.isArray(task.assignedTo) && task.assignedTo.length > 0 ? <div className="flex flex-col text-xs text-gray-700">{task.assignedTo.map(uid => <span key={uid} className="truncate max-w-[150px]" title={resolveName(uid)}>{resolveName(uid)}</span>)}</div> : <span className="text-xs text-gray-400 italic">Unassigned</span>}</td>
+                             <td className="px-6 py-4"><div className="flex flex-col text-xs"><span className="text-gray-600">{formatDate(task.createdAt)}</span></div></td>
                              <td className="px-6 py-4 text-right">
-                                <div className="flex justify-end gap-3">
-                                    <button onClick={(e) => handleEditTask(e, task)} className="text-gray-400 hover:text-blue-600"><PencilIcon /></button>
-                                    {isTeamCreator && <button onClick={(e) => handleDeleteTask(e, task)} className="text-gray-400 hover:text-red-600"><TrashIcon /></button>}
+                                <div className="flex justify-end gap-3 min-h-[20px]">
+                                    {canEdit && (
+                                        <>
+                                            <button onClick={(e) => handleEditTask(e, task)} className="text-gray-400 hover:text-blue-600"><PencilIcon /></button>
+                                            <button onClick={(e) => handleDeleteTask(e, task)} className="text-gray-400 hover:text-red-600"><TrashIcon /></button>
+                                        </>
+                                    )}
                                 </div>
                              </td>
                          </tr>
@@ -378,13 +287,13 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
         </table>
       </div>
 
-      {/* MODALS */}
       <CreateTaskModal 
          isOpen={isCreateTaskModalOpen} 
-         onClose={() => setIsCreateTaskModalOpen(false)} 
+         onClose={() => { setIsCreateTaskModalOpen(false); setTaskToEdit(null); }} 
          teamId={teamId}
-         projectId={selectedProjectId}
+         projectId={selectedProjectId || (taskToEdit ? taskToEdit.projectId : null)} 
          membersDetails={membersDetails}
+         taskToEdit={taskToEdit} 
       />
 
       {isDetailsModalOpen && selectedTaskContext && (
@@ -398,7 +307,6 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
         />
       )}
 
-      {/* NEW: Manage Project Members Modal */}
       <ManageProjectMembersModal
           isOpen={isManageMembersModalOpen}
           onClose={() => setIsManageMembersModalOpen(false)}

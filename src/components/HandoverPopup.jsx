@@ -13,14 +13,18 @@ const TELEGRAM_BOT_TOKEN = '8204073221:AAEuEMTZoeRAPBx0IjkSc-ZafHjiTMarb6g';
 // --- ICONS ---
 const PaperClipIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>;
 const LinkIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>;
+const ExclamationIcon = () => <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>;
+const FileIcon = () => <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>;
+const CloseIcon = () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>;
 
-// --- TELEGRAM HELPER (Kept Same) ---
-const sendTelegramNotification = async (chatId, type, details) => {
+// --- TELEGRAM HELPER ---
+const sendTelegramNotification = async (chatId, type, details, teamId) => {
     if (!TELEGRAM_BOT_TOKEN || !chatId) return;
     const { userName, projectName, taskName, duration, projectUrl, notes, fileCount } = details;
     const now = new Date().toLocaleString();
     const linkHtml = projectUrl ? `\n\n🔗 ${projectUrl}` : '';
     let message = '';
+    
     switch (type) {
         case 'start':
         case 'resume':
@@ -34,20 +38,33 @@ const sendTelegramNotification = async (chatId, type, details) => {
             message = `<b>✅ Task Approved & Completed</b>\n👤 <b>Approver:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}${linkHtml}`;
             break;
         case 'revision':
-            message = `<b>↩️ Revision Requested</b>\n👤 <b>Reviewer:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}${linkHtml}`;
+            message = `<b>↩️ Revision Requested</b>\n👤 <b>Reviewer:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⚠️ <b>Feedback:</b> ${notes}${linkHtml}`;
             break;
         case 'pause':
             message = `<b>⏸️ User Paused Task</b>\n👤 <b>User:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⏱️ <b>Duration:</b> ${duration}${linkHtml}`;
             break;
         default: break;
     }
+
     if (message) {
         try {
-            await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+            const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true })
             });
+            
+            const data = await response.json();
+
+            // Auto-fix for Supergroup Migration
+            if (!data.ok && data.error_code === 400 && data.parameters?.migrate_to_chat_id) {
+                console.log("Telegram Group Migrated. Updating DB...");
+                const newChatId = data.parameters.migrate_to_chat_id;
+                if (teamId) {
+                    await updateDoc(doc(db, 'teams', teamId), { telegramChatId: newChatId });
+                    await sendTelegramNotification(newChatId, type, details, teamId);
+                }
+            }
         } catch (error) { console.error("Failed to send Telegram notification", error); }
     }
 };
@@ -95,12 +112,19 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
   const [submissionImages, setSubmissionImages] = useState([]); 
   const [submissionFiles, setSubmissionFiles] = useState([]); 
 
+  // --- REVISION MODAL ---
+  const [revisionModal, setRevisionModal] = useState(false);
+  const [revisionReason, setRevisionReason] = useState('');
+
+  // --- IMAGE PREVIEW MODAL ---
+  const [previewImage, setPreviewImage] = useState(null);
+
   const [isCreator, setIsCreator] = useState(false);
 
   const resolveName = (uid) => {
     if (!uid) return 'Unknown';
     const member = membersDetails.find(m => m.uid === uid);
-    return member ? (member.displayName || member.email) : uid;
+    return member ? (member.displayName || member.email) : 'Unknown User';
   };
 
   // 1. Fetch Project & Find Task
@@ -115,8 +139,6 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
           const d = docSnap.data();
           setProjectData({ id: docSnap.id, ...d });
           if (auth.currentUser && d.createdBy === auth.currentUser.uid) setIsCreator(true);
-          
-          // Find Specific Task
           const foundTask = d.projectTasks?.find(t => t.id === taskId);
           setTaskData(foundTask || null);
         }
@@ -128,7 +150,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
     fetchData();
   }, [teamId, handoverId, taskId]);
 
-  // 2. Fetch Project Comments (We still show project chat for context)
+  // 2. Fetch Comments 
   useEffect(() => {
       if(!teamId || !handoverId) return;
       const q = query(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), orderBy('createdAt', 'asc'));
@@ -165,7 +187,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
           if (Object.keys(additionalData).length > 0) tasks[taskIndex] = { ...tasks[taskIndex], ...additionalData };
 
           await updateDoc(docRef, { projectTasks: tasks });
-          setTaskData({ ...tasks[taskIndex] }); // Update local state
+          setTaskData({ ...tasks[taskIndex] });
       } catch (err) { console.error("Error updating status:", err); }
   };
 
@@ -184,30 +206,38 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
               const durationStr = formatDuration(endTime - startTime);
               await updateDoc(logRef, { endTime: serverTimestamp(), status: 'completed', action: actionType === 'pause' ? 'Paused' : 'Stopped' });
               
-              if (actionType === 'pause') sendTelegramNotification(telegramChatId, 'pause', { userName, projectName: projectData.title, taskName: taskData.title, duration: durationStr, projectUrl });
+              if (actionType === 'pause') sendTelegramNotification(telegramChatId, 'pause', { userName, projectName: projectData.title, taskName: taskData.title, duration: durationStr, projectUrl }, teamId);
           }
 
           if (actionType === 'start' || actionType === 'resume') {
               await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
                   type: 'task', action: 'Working', userName, userId: currentUserUid, handoverId, taskId, taskTitle: taskData.title, startTime: serverTimestamp(), status: 'active', createdAt: serverTimestamp()
               });
-              sendTelegramNotification(telegramChatId, actionType, { userName, projectName: projectData.title, taskName: taskData.title, projectUrl });
+              sendTelegramNotification(telegramChatId, actionType, { userName, projectName: projectData.title, taskName: taskData.title, projectUrl }, teamId);
           }
       } catch (err) { console.error("Error toggling work:", err); }
   };
 
   const handleConfirmSubmit = async () => {
       const userName = auth.currentUser?.displayName || 'Unknown';
-      
+      const details = { 
+        userName, 
+        projectName: projectData.title, 
+        taskName: taskData.title, 
+        notes: submissionNote, 
+        fileCount: submissionImages.length + submissionFiles.length, 
+        projectUrl: `${window.location.origin}/team/${teamId}` 
+      };
+
       if (activeSession) {
           const logRef = doc(db, 'teams', teamId, 'workLogs', activeSession.id);
           const endTime = new Date();
           const startTime = activeSession.startTime?.toDate ? activeSession.startTime.toDate() : new Date(activeSession.startTime);
           const durationStr = formatDuration(endTime - startTime);
           await updateDoc(logRef, { endTime: serverTimestamp(), status: 'completed', action: 'Submitted' });
-          sendTelegramNotification(telegramChatId, 'submit', { userName, projectName: projectData.title, taskName: taskData.title, duration: durationStr, notes: submissionNote, fileCount: submissionImages.length + submissionFiles.length, projectUrl: `${window.location.origin}/team/${teamId}` });
+          sendTelegramNotification(telegramChatId, 'submit', { ...details, duration: durationStr }, teamId);
       } else {
-          sendTelegramNotification(telegramChatId, 'submit', { userName, projectName: projectData.title, taskName: taskData.title, duration: 'N/A', notes: submissionNote, fileCount: submissionImages.length + submissionFiles.length, projectUrl: `${window.location.origin}/team/${teamId}` });
+          sendTelegramNotification(telegramChatId, 'submit', { ...details, duration: 'N/A' }, teamId);
       }
 
       await handleUpdateTaskStatus('QA', {
@@ -220,6 +250,26 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
           }
       });
       setSubmissionModal(false);
+  };
+
+  const handleConfirmRevision = async () => {
+    if (!revisionReason.trim()) return alert("Please provide a reason.");
+    const userName = auth.currentUser?.displayName || 'Unknown';
+    
+    await handleUpdateTaskStatus('Revision', {
+        revisionFeedback: {
+            reason: revisionReason,
+            requestedBy: currentUserUid,
+            requestedAt: new Date().toISOString()
+        }
+    });
+
+    sendTelegramNotification(telegramChatId, 'revision', { 
+        userName, projectName: projectData.title, taskName: taskData.title, notes: revisionReason, projectUrl: `${window.location.origin}/team/${teamId}` 
+    }, teamId);
+
+    setRevisionModal(false);
+    setRevisionReason('');
   };
 
   const processPaste = (e, setImagesFunc) => {
@@ -243,13 +293,13 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
       });
   };
 
-  // --- HELPERS ---
   const getStatusColor = (status) => {
       switch(status) {
-          case 'In Progress': return 'bg-blue-100 text-blue-700';
-          case 'QA': return 'bg-purple-100 text-purple-700';
-          case 'Completed': return 'bg-green-100 text-green-700';
-          default: return 'bg-gray-100 text-gray-600';
+          case 'In Progress': return 'bg-blue-100 text-blue-800 border-blue-200';
+          case 'QA': return 'bg-purple-100 text-purple-800 border-purple-200';
+          case 'Completed': return 'bg-green-100 text-green-800 border-green-200';
+          case 'Revision': return 'bg-red-100 text-red-800 border-red-200';
+          default: return 'bg-gray-100 text-gray-800 border-gray-200';
       }
   };
 
@@ -258,149 +308,191 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
   const isAssigned = taskData && ( (Array.isArray(taskData.assignedTo) && taskData.assignedTo.includes(currentUserUid)) || isCreator );
   const isActive = activeSession && activeSession.taskId === taskId && activeSession.status === 'active';
   const isPaused = activeSession && activeSession.taskId === taskId && activeSession.status === 'paused';
+  const isRevision = taskData?.status === 'Revision';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl h-[90vh] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-[95vw] h-[92vh] flex flex-col overflow-hidden animate-fade-in-up">
         
         {/* HEADER */}
-        <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 bg-white">
+        <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 bg-white">
           <div>
-             <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wide">{projectData?.title || 'Project'}</h3>
+             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{projectData?.title || 'Project'}</h3>
              <h2 className="text-xl font-extrabold text-slate-800">{loading ? 'Loading...' : (taskData?.title || 'Task Details')}</h2>
           </div>
           <button onClick={onClose} className="bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 p-2 rounded-full transition-all">
-             <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+             <CloseIcon />
           </button>
         </div>
 
         <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-slate-50">
           
-          {/* LEFT: TASK DETAILS */}
-          <div className="flex-1 p-8 overflow-y-auto custom-scrollbar flex flex-col">
-             
+          {/* LEFT: MAIN CONTENT */}
+          <div className="flex-1 p-6 overflow-y-auto custom-scrollbar flex flex-col">
              {!loading && taskData ? (
-                 <div className="space-y-8">
-                     
-                     {/* 1. Status Bar & Actions */}
-                     <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
-                         <div className="flex items-center gap-3">
-                             <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wide ${getStatusColor(taskData.status)}`}>{taskData.status}</span>
-                             <span className={`px-3 py-1 rounded-full text-xs font-bold border ${taskData.priority === 'High' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>{taskData.priority}</span>
-                         </div>
-                         
-                         {/* TIMER & CONTROLS */}
-                         {isAssigned && taskData.status !== 'Completed' && (
-                             <div className="flex items-center gap-3">
-                                 {isActive && <LiveDuration startTime={activeSession.startTime} isPaused={false} />}
-                                 {isPaused && <span className="text-orange-500 font-mono font-bold">Paused</span>}
-                                 
-                                 {(!isActive && !isPaused) && (
-                                     <button onClick={() => handleToggleWork('start')} className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg shadow-green-500/30 hover:bg-green-700 transition">Start Work</button>
-                                 )}
-                                 {isPaused && (
-                                     <button onClick={() => handleToggleWork('resume')} className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 transition">Resume</button>
-                                 )}
-                                 {isActive && (
-                                     <>
-                                        <button onClick={() => handleToggleWork('pause')} className="bg-amber-100 text-amber-700 px-4 py-2 rounded-lg font-bold hover:bg-amber-200">Pause</button>
-                                        <button onClick={() => setSubmissionModal(true)} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700">Submit</button>
-                                     </>
-                                 )}
-                             </div>
-                         )}
-                     </div>
-
-                     {/* 2. Description */}
-                     <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                         <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Description</h4>
-                         <div className="prose prose-sm text-slate-700 whitespace-pre-wrap">{taskData.description || 'No description provided.'}</div>
-                     </div>
-
-                     {/* 3. Attachments */}
-                     {( (taskData.images && taskData.images.length > 0) || (taskData.files && taskData.files.length > 0) || (taskData.links && taskData.links.length > 0) ) && (
-                         <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-                             <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><PaperClipIcon /> Resources</h4>
-                             
-                             {/* Links */}
-                             {taskData.links?.length > 0 && (
-                                 <div className="mb-4 flex flex-col gap-2">
-                                     {taskData.links.map((link, i) => (
-                                         <a key={i} href={link} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-blue-600 hover:underline text-sm bg-blue-50 p-2 rounded"><LinkIcon /> {link}</a>
-                                     ))}
-                                 </div>
-                             )}
-
-                             {/* Files Grid */}
-                             <div className="flex gap-4 flex-wrap">
-                                 {taskData.images?.map((img, i) => <img key={i} src={img} className="h-24 w-24 object-cover rounded-lg border shadow-sm cursor-pointer hover:scale-105 transition" onClick={() => window.open(img)} />)}
-                                 {taskData.files?.map((f, i) => (
-                                    <div key={i} className="h-24 w-24 bg-slate-50 border rounded-lg flex flex-col items-center justify-center p-2 text-center">
-                                        <span className="text-[10px] font-bold text-slate-600 uppercase line-clamp-2">{f.name}</span>
-                                        <span className="text-[9px] text-slate-400 mt-1">FILE</span>
+                 <div className="space-y-6">
+                      
+                      {/* STATUS & ACTIONS CARD */}
+                      <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <div className="flex items-center gap-2">
+                                <span className={`px-3 py-1 rounded-full text-xs font-bold border uppercase ${getStatusColor(taskData.status)}`}>{taskData.status}</span>
+                                <span className={`px-3 py-1 rounded-full text-xs font-bold border ${taskData.priority === 'High' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>{taskData.priority}</span>
+                            </div>
+                            
+                            {/* WORK CONTROLS */}
+                            {isAssigned && taskData.status !== 'Completed' && (
+                                <div className="flex items-center gap-3">
+                                    {isActive && <LiveDuration startTime={activeSession.startTime} isPaused={false} />}
+                                    {isPaused && <span className="text-orange-500 font-mono font-bold text-lg">Paused</span>}
+                                    
+                                    <div className="flex gap-2">
+                                        {(!isActive && !isPaused) && (
+                                            <button 
+                                                onClick={() => handleToggleWork('start')} 
+                                                className={`px-6 py-2 rounded-lg font-bold shadow-sm transition flex items-center gap-2 text-white
+                                                    ${isRevision ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20' : 'bg-green-600 hover:bg-green-700 shadow-green-500/20'}`}
+                                            >
+                                                {isRevision ? '🛠️ Start Revision Fix' : '🚀 Start Work'}
+                                            </button>
+                                        )}
+                                        {isPaused && <button onClick={() => handleToggleWork('resume')} className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700">Resume</button>}
+                                        {isActive && (
+                                            <>
+                                                <button onClick={() => handleToggleWork('pause')} className="bg-amber-100 text-amber-700 px-4 py-2 rounded-lg font-bold hover:bg-amber-200">Pause</button>
+                                                <button onClick={() => setSubmissionModal(true)} className="bg-blue-600 text-white px-6 py-2 rounded-lg font-bold shadow-lg shadow-blue-500/30 hover:bg-blue-700">Submit</button>
+                                            </>
+                                        )}
                                     </div>
-                                 ))}
-                             </div>
-                         </div>
-                     )}
+                                </div>
+                            )}
+                      </div>
 
-                     {/* 4. Submission Info (If QA) */}
-                     {taskData.submission && (
-                        <div className="bg-purple-50 p-6 rounded-xl border border-purple-100">
-                             <div className="flex items-center gap-2 mb-3">
-                                <span className="text-xs font-bold text-purple-700 uppercase">Submission by {resolveName(taskData.submission.submittedBy)}</span>
-                                <span className="text-[10px] text-purple-400">{new Date(taskData.submission.submittedAt).toLocaleString()}</span>
+                      {/* REVISION ALERT */}
+                      {(taskData.status === 'Revision' || taskData.revisionFeedback) && (
+                        <div className="bg-red-50 p-5 rounded-lg border border-red-200">
+                             <div className="flex items-center gap-2 mb-2">
+                                 <ExclamationIcon />
+                                 <span className="text-sm font-bold text-red-700 uppercase">Reviewer Feedback</span>
                              </div>
-                             <p className="text-sm text-slate-700 mb-4 whitespace-pre-wrap">{taskData.submission.note}</p>
-                             <div className="flex gap-3 overflow-x-auto">
-                                {taskData.submission.images?.map((img, i) => <img key={i} src={img} className="h-20 w-20 object-cover rounded border" />)}
+                             <div className="text-slate-700 text-sm whitespace-pre-wrap bg-white p-3 rounded border border-red-100">
+                                 {taskData.revisionFeedback?.reason || 'No specific feedback provided.'}
                              </div>
-                             
-                             {/* ADMIN ACTIONS FOR QA */}
-                             {isCreator && taskData.status === 'QA' && (
-                                 <div className="flex gap-3 mt-4 pt-4 border-t border-purple-200">
-                                     <button onClick={() => { if(window.confirm("Request Revision?")) handleUpdateTaskStatus('Revision'); }} className="bg-white text-red-600 border border-red-200 px-4 py-2 rounded font-bold text-xs hover:bg-red-50">Request Revision</button>
-                                     <button onClick={() => { if(window.confirm("Approve?")) handleUpdateTaskStatus('Completed'); }} className="bg-emerald-600 text-white px-4 py-2 rounded font-bold text-xs hover:bg-emerald-700 shadow-sm">Approve & Complete</button>
-                                 </div>
-                             )}
+                             <div className="mt-2 text-[10px] text-red-400">
+                                Requested by {resolveName(taskData.revisionFeedback?.requestedBy)} on {new Date(taskData.revisionFeedback?.requestedAt).toLocaleString()}
+                             </div>
                         </div>
-                     )}
+                      )}
 
-                 </div>
-             ) : <div className="text-center py-20 text-slate-400">Task not found</div>}
+                      {/* DESCRIPTION CARD */}
+                      <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
+                          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Description</h4>
+                          <div className="prose prose-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{taskData.description || 'No description provided.'}</div>
+                      </div>
+
+                      {/* RESOURCES CARD */}
+                      {( (taskData.images && taskData.images.length > 0) || (taskData.files && taskData.files.length > 0) || (taskData.links && taskData.links.length > 0) ) && (
+                          <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
+                              <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2"><PaperClipIcon /> Resources</h4>
+                              
+                              {taskData.links?.length > 0 && (
+                                  <div className="mb-4 flex flex-col gap-2">
+                                      {taskData.links.map((link, i) => (
+                                          <a key={i} href={link} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-blue-600 hover:underline text-sm bg-blue-50 p-2 rounded border border-blue-100"><LinkIcon /> {link}</a>
+                                      ))}
+                                  </div>
+                              )}
+
+                              <div className="flex gap-3 flex-wrap">
+                                  {taskData.images?.map((img, i) => (
+                                      <div key={i} className="relative group">
+                                         <img src={img} className="h-24 w-24 object-cover rounded-lg border shadow-sm cursor-zoom-in hover:scale-105 transition" onClick={() => setPreviewImage(img)} />
+                                      </div>
+                                  ))}
+                                  {taskData.files?.map((f, i) => (
+                                     <a key={i} href={f.data} download={f.name} className="h-24 w-24 bg-slate-50 border rounded-lg flex flex-col items-center justify-center p-2 text-center hover:bg-slate-100 transition cursor-pointer">
+                                          <FileIcon />
+                                          <span className="text-[10px] font-bold text-slate-600 uppercase line-clamp-2 mt-1">{f.name}</span>
+                                          <span className="text-[8px] text-slate-400 mt-0.5">DOWNLOAD</span>
+                                      </a>
+                                  ))}
+                              </div>
+                          </div>
+                      )}
+
+                      {/* SUBMISSION CARD (QA) */}
+                      {taskData.submission && (
+                          <div className="bg-purple-50 p-6 rounded-lg border border-purple-100 shadow-sm">
+                              <div className="flex justify-between items-start mb-2">
+                                  <span className="text-xs font-bold text-purple-700 uppercase">Submission by {resolveName(taskData.submission.submittedBy)}</span>
+                                  <span className="text-[10px] text-purple-400">{new Date(taskData.submission.submittedAt).toLocaleString()}</span>
+                              </div>
+                              <p className="text-sm text-slate-700 mb-4 whitespace-pre-wrap">{taskData.submission.note}</p>
+                              
+                              <div className="flex gap-2 overflow-x-auto pb-2">
+                                  {taskData.submission.images?.map((img, i) => <img key={i} src={img} className="h-16 w-16 object-cover rounded border border-purple-200 cursor-zoom-in hover:opacity-80" onClick={() => setPreviewImage(img)} />)}
+                                  {taskData.submission.files?.map((f, i) => (
+                                      <a key={i} href={f.data} download={f.name} className="h-16 w-16 bg-white border border-purple-200 rounded flex flex-col items-center justify-center text-center p-1 hover:bg-purple-100 transition">
+                                          <FileIcon />
+                                          <span className="text-[8px] font-bold text-slate-600 line-clamp-2 w-full mt-1">{f.name}</span>
+                                      </a>
+                                  ))}
+                              </div>
+                              
+                              {/* ADMIN QA ACTIONS */}
+                              {isCreator && taskData.status === 'QA' && (
+                                  <div className="flex gap-3 mt-4 pt-4 border-t border-purple-200">
+                                      <button onClick={() => setRevisionModal(true)} className="bg-white text-red-600 border border-red-200 px-4 py-2 rounded font-bold text-xs hover:bg-red-50 hover:border-red-300 transition-all flex items-center gap-2 shadow-sm">Request Revision</button>
+                                      <button onClick={() => { if(window.confirm("Approve?")) handleUpdateTaskStatus('Completed'); }} className="bg-emerald-600 text-white px-4 py-2 rounded font-bold text-xs hover:bg-emerald-700 shadow-sm flex-1">Approve & Complete</button>
+                                  </div>
+                              )}
+                          </div>
+                      )}
+                  </div>
+             ) : <div className="text-center py-20 text-slate-400">Loading task...</div>}
           </div>
 
-          {/* RIGHT: CHAT (Project Context) */}
-          <div className="w-full lg:w-[350px] border-l border-slate-200 bg-white flex flex-col h-full shadow-lg z-20">
-               <div className="p-4 bg-slate-50 border-b border-slate-200">
-                   <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Discussion</h4>
-               </div>
-               
-               <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
-                  {comments.map((msg) => (
-                      <div key={msg.id} className="group">
-                          <div className="flex justify-between items-baseline mb-1 px-1">
-                              <span className="font-bold text-slate-700 text-xs">{msg.userName}</span>
-                              <span className="text-[10px] text-slate-400">{msg.createdAt?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
-                          </div>
-                          <div className="bg-white p-3 rounded-2xl rounded-tl-none border border-slate-200 text-slate-600 text-sm shadow-sm break-words">
-                              {msg.text}
-                          </div>
-                      </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-               </div>
+          {/* RIGHT: DISCUSSION SIDEBAR */}
+          <div className="w-full lg:w-[320px] border-l border-slate-200 bg-white flex flex-col h-full z-20">
+                <div className="p-4 bg-white border-b border-slate-100">
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Discussion</h4>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30">
+                   {comments.map((msg) => (
+                       <div key={msg.id} className="group">
+                           <div className="flex justify-between items-baseline mb-1 px-1">
+                               <span className="font-bold text-slate-700 text-xs">{resolveName(msg.userId)}</span>
+                               <span className="text-[10px] text-slate-400">{msg.createdAt?.toDate().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                           </div>
+                           <div className="bg-white p-3 rounded-lg rounded-tl-none border border-slate-200 text-slate-600 text-sm shadow-sm break-words">
+                               {msg.text}
+                           </div>
+                       </div>
+                   ))}
+                   <div ref={messagesEndRef} />
+                </div>
 
-               {/* CHAT INPUT */}
-               <form onSubmit={(e) => { e.preventDefault(); if(!newComment.trim()) return; addDoc(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), { text: newComment, userId: auth.currentUser.uid, userName: auth.currentUser.displayName || 'Unknown', createdAt: serverTimestamp() }); setNewComment(''); }} className="p-3 border-t border-slate-200 bg-white flex gap-2">
-                   <input className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type a message..." value={newComment} onChange={e => setNewComment(e.target.value)} />
-                   <button type="submit" disabled={!newComment.trim()} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 disabled:opacity-50 transition">Send</button>
-               </form>
+                <form onSubmit={(e) => { e.preventDefault(); if(!newComment.trim()) return; addDoc(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), { text: newComment, userId: auth.currentUser.uid, userName: auth.currentUser.displayName || 'Unknown', createdAt: serverTimestamp() }); setNewComment(''); }} className="p-3 border-t border-slate-200 bg-white flex gap-2">
+                    <input className="flex-1 bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type a message..." value={newComment} onChange={e => setNewComment(e.target.value)} />
+                    <button type="submit" disabled={!newComment.trim()} className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-bold hover:bg-blue-700 disabled:opacity-50 transition">Send</button>
+                </form>
           </div>
         </div>
       </div>
 
-      {/* --- SUBMISSION MODAL (Overlay) --- */}
+      {/* --- IMAGE PREVIEW MODAL (POPUP) --- */}
+      {previewImage && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 backdrop-blur-md p-4" onClick={() => setPreviewImage(null)}>
+            <div className="relative max-w-[90vw] max-h-[90vh]">
+                <img src={previewImage} className="max-w-full max-h-[90vh] rounded shadow-2xl" />
+                <button onClick={() => setPreviewImage(null)} className="absolute -top-4 -right-4 bg-white text-black p-2 rounded-full shadow-lg hover:bg-gray-200">
+                    <CloseIcon />
+                </button>
+            </div>
+        </div>
+      )}
+
+      {/* --- SUBMISSION MODAL --- */}
       {submissionModal && (
         <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 animate-fade-in-up flex flex-col max-h-[90vh]">
@@ -409,15 +501,15 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
                     <textarea className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32" placeholder="Notes... (Paste images Ctrl+V)" value={submissionNote} onChange={(e) => setSubmissionNote(e.target.value)} onPaste={(e) => processPaste(e, setSubmissionImages)}></textarea>
                     
                     <div>
-                         <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Attachments</label>
-                         <label className="flex flex-col items-center justify-center w-full h-16 border-2 border-slate-300 border-dashed rounded-lg cursor-pointer hover:bg-slate-50">
-                            <span className="text-xs text-slate-500">Upload Files</span>
-                            <input type="file" multiple className="hidden" onChange={(e) => handleFileUpload(e, setSubmissionFiles)} />
-                        </label>
-                        <div className="flex gap-2 mt-2 flex-wrap">
-                            {submissionImages.map((img, i) => <img key={i} src={img} className="h-10 w-10 object-cover rounded border" />)}
-                            {submissionFiles.map((f, i) => <div key={i} className="px-2 py-1 bg-gray-100 rounded text-[10px] border">{f.name}</div>)}
-                        </div>
+                          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Attachments</label>
+                          <label className="flex flex-col items-center justify-center w-full h-16 border-2 border-slate-300 border-dashed rounded-lg cursor-pointer hover:bg-slate-50">
+                             <span className="text-xs text-slate-500">Upload Files</span>
+                             <input type="file" multiple className="hidden" onChange={(e) => handleFileUpload(e, setSubmissionFiles)} />
+                          </label>
+                          <div className="flex gap-2 mt-2 flex-wrap">
+                             {submissionImages.map((img, i) => <img key={i} src={img} className="h-10 w-10 object-cover rounded border" />)}
+                             {submissionFiles.map((f, i) => <div key={i} className="px-2 py-1 bg-gray-100 rounded text-[10px] border">{f.name}</div>)}
+                          </div>
                     </div>
                 </div>
                 <div className="flex justify-end gap-3 pt-4 border-t mt-2">
@@ -427,6 +519,25 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
             </div>
         </div>
       )}
+
+      {/* --- REVISION REQUEST MODAL --- */}
+      {revisionModal && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-red-900/40 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 animate-fade-in-up border-t-4 border-red-500">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2"><ExclamationIcon /> Request Revision</h3>
+                    <button onClick={() => setRevisionModal(false)} className="text-slate-400 hover:text-slate-600"><CloseIcon /></button>
+                </div>
+                <p className="text-sm text-slate-500 mb-3">Please explain what changes are needed.</p>
+                <textarea className="w-full border border-slate-300 rounded-lg p-3 text-sm focus:ring-2 focus:ring-red-500 outline-none h-32 resize-none" placeholder="Enter revision feedback here..." value={revisionReason} onChange={(e) => setRevisionReason(e.target.value)} autoFocus></textarea>
+                <div className="flex justify-end gap-3 pt-4 mt-2">
+                    <button onClick={() => setRevisionModal(false)} className="px-4 py-2 text-slate-500 font-bold text-sm hover:text-slate-700">Cancel</button>
+                    <button onClick={handleConfirmRevision} className="px-6 py-2 bg-red-600 text-white rounded-lg font-bold text-sm hover:bg-red-700 shadow-lg shadow-red-500/20">Send Revision Request</button>
+                </div>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 };
