@@ -1,176 +1,226 @@
 // src/components/AddEndorsementModal.jsx
 import React, { useState, useEffect } from 'react';
 import { db, auth } from '../firebaseConfig';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { addDoc, collection, serverTimestamp, doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 
-const AddEndorsementModal = ({ 
-  isOpen, 
-  onClose, 
-  teamId, 
-  onEndorsementAdded, 
-  t,
-  categoriesList = [],
-  membersList = [],
-  manageCategories 
-}) => {
+// Helper Icons
+const PlusSmIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>;
+const TrashIcon = () => <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>;
+
+const AddEndorsementModal = ({ isOpen, onClose, teamId, t, categoriesList, membersList, onEndorsementAdded, parentId = null }) => {
   const [title, setTitle] = useState('');
-  const [description, setDescription] = useState(''); 
   const [category, setCategory] = useState('');
-  const [assignees, setAssignees] = useState([]); 
   
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState('');
+  // Local state to show updates immediately without waiting for parent refresh
+  const [localCategories, setLocalCategories] = useState([]); 
+  
+  const [newCategory, setNewCategory] = useState('');
+  const [isAddingCategory, setIsAddingCategory] = useState(false);
+  const [assignees, setAssignees] = useState([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Sync local state with props when modal opens or props change
   useEffect(() => {
-    if (isOpen) {
-      setTitle('');
-      setDescription('');
-      setCategory(categoriesList.length > 0 ? categoriesList[0] : 'General');
-      setAssignees([]);
-      setError('');
-      setIsSaving(false);
-    }
-  }, [isOpen, categoriesList]); 
+      if (isOpen) {
+          setLocalCategories(categoriesList || []);
+      }
+  }, [categoriesList, isOpen]);
 
   if (!isOpen) return null;
 
-  const toggleAssignee = (uid) => {
-    setAssignees(prev => {
-      if (prev.includes(uid)) return prev.filter(id => id !== uid);
-      return [...prev, uid];
-    });
+  // --- HANDLE ADD CATEGORY ---
+  const handleAddCategory = async () => {
+      const val = newCategory.trim();
+      if (!val) return;
+      if (localCategories.includes(val)) {
+          alert("Category already exists");
+          return;
+      }
+
+      // 1. Optimistic UI Update (Update list immediately)
+      const updatedList = [...localCategories, val];
+      setLocalCategories(updatedList);
+      setCategory(val);
+      setNewCategory('');
+      setIsAddingCategory(false);
+
+      // 2. Update Database
+      try {
+          const teamRef = doc(db, 'teams', teamId);
+          await updateDoc(teamRef, {
+              endorsementCategories: arrayUnion(val)
+          });
+      } catch (error) {
+          console.error("Error adding category:", error);
+          alert("Failed to save category to database");
+          // Revert if failed
+          setLocalCategories(prev => prev.filter(c => c !== val));
+      }
+  };
+
+  // --- HANDLE REMOVE CATEGORY ---
+  const handleRemoveCategory = async (catToRemove) => {
+      if (!window.confirm(`Remove category "${catToRemove}"?`)) return;
+
+      // 1. Optimistic UI Update
+      setLocalCategories(prev => prev.filter(c => c !== catToRemove));
+      if (category === catToRemove) setCategory('');
+
+      // 2. Update Database
+      try {
+          const teamRef = doc(db, 'teams', teamId);
+          await updateDoc(teamRef, {
+              endorsementCategories: arrayRemove(catToRemove)
+          });
+      } catch (error) {
+          console.error("Error removing category:", error);
+          alert("Failed to remove category from database");
+          // Revert if failed
+          setLocalCategories(prev => [...prev, catToRemove]);
+      }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!title.trim()) { setError(t('common.requiredFields', 'Project Title is required.')); return; }
-    if (!teamId) { setError("Team ID is missing."); return; }
+    if (!title.trim()) return alert("Project title is required");
 
-    setIsSaving(true);
-    setError('');
-
+    setIsSubmitting(true);
     try {
-      const currentUser = auth.currentUser;
-      const userName = currentUser?.displayName || currentUser?.email || 'Unknown User';
-      const userId = currentUser?.uid || 'anonymous';
-
-      const initialHistory = [{
-        action: 'Created Project',
-        by: userName,
-        timestamp: new Date().toISOString()
-      }];
-
-      await addDoc(collection(db, 'teams', teamId, 'handovers'), {
-        title: title,
-        description: description, 
-        category: category,
-        priority: 'Medium',
-        status: 'Not Started', 
-        assignees: assignees,
-        postedBy: userName, 
-        createdBy: userId,
+      await addDoc(collection(db, `teams/${teamId}/handovers`), {
+        title,
+        category: category || 'General',
+        assignees,
+        parentId: parentId || null, 
+        postedBy: auth.currentUser.uid,
         createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        history: initialHistory,
-        projectTasks: [], 
+        projectTasks: [] 
       });
-
-      await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
-          type: 'project_creation',
-          action: `Created Project: ${title}`,
-          userName: userName,
-          userId: userId,
-          createdAt: serverTimestamp(),
-          details: `Category: ${category}`
-      });
-
-      if (onEndorsementAdded) onEndorsementAdded();
-      onClose(); 
-    } catch (err) {
-      console.error("Error creating project:", err);
-      setError(t('common.errorSave', 'Failed to save.'));
+      
+      setTitle('');
+      setCategory('');
+      setAssignees([]);
+      onEndorsementAdded();
+      onClose();
+    } catch (error) {
+      console.error("Error creating project:", error);
+      alert("Failed to create project.");
     } finally {
-      setIsSaving(false);
+      setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-      {/* WIDENED MODAL HERE: max-w-2xl */}
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
-        <div className="flex justify-between items-center p-6 border-b bg-gray-50 rounded-t-lg">
-          <div>
-            <h2 className="text-xl font-bold text-gray-800">Create New Project</h2>
-            <p className="text-xs text-gray-500 mt-1">Set up a new project container.</p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6">
-          <form id="create-project-form" onSubmit={handleSubmit} className="space-y-6">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+        <h3 className="text-lg font-bold text-gray-800 mb-4">
+            {parentId ? 'Create New Sub-Project' : 'Create New Project'}
+        </h3>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Title Input */}
             <div>
-              <label className="block text-sm font-bold text-gray-700 mb-1">Project Title <span className="text-red-500">*</span></label>
-              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 text-lg" placeholder="e.g., Website Redesign" />
-            </div>
-            
-            {/* Category with Manage Button */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-              <div className="flex gap-2">
-                  <select 
-                    value={category} 
-                    onChange={(e) => setCategory(e.target.value)} 
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-md shadow-sm bg-white focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    {categoriesList.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                  </select>
-                  
-                  {manageCategories && (
-                      <button 
-                        type="button" 
-                        onClick={manageCategories} 
-                        className="px-3 py-2 bg-gray-100 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-200 text-xs font-medium"
-                        title="Add or remove categories"
-                      >
-                        Manage
-                      </button>
-                  )}
-              </div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Title</label>
+                <input 
+                    type="text" 
+                    value={title} 
+                    onChange={e => setTitle(e.target.value)} 
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    placeholder="e.g. Website Redesign"
+                    autoFocus
+                />
             </div>
 
+            {/* Category Selection with Add/Remove Logic */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-              <textarea rows="5" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500" placeholder="Briefly describe the project..." />
+                <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-bold text-gray-500 uppercase">Category</label>
+                    <button 
+                        type="button" 
+                        onClick={() => setIsAddingCategory(!isAddingCategory)} 
+                        className="text-[10px] text-blue-600 font-bold hover:underline flex items-center gap-1"
+                    >
+                        {isAddingCategory ? 'Cancel' : '+ New Category'}
+                    </button>
+                </div>
+
+                {isAddingCategory ? (
+                    <div className="flex gap-2">
+                        <input 
+                            type="text" 
+                            value={newCategory} 
+                            onChange={e => setNewCategory(e.target.value)} 
+                            className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                            placeholder="Enter category name"
+                        />
+                        <button 
+                            type="button" 
+                            onClick={handleAddCategory} 
+                            className="bg-blue-600 text-white px-3 py-2 rounded-md text-sm font-bold hover:bg-blue-700"
+                        >
+                            Add
+                        </button>
+                    </div>
+                ) : (
+                    <div className="relative">
+                        <select 
+                            value={category} 
+                            onChange={e => setCategory(e.target.value)} 
+                            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white"
+                        >
+                            <option value="">Select Category</option>
+                            {localCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                    </div>
+                )}
+
+                {/* List of categories with delete buttons */}
+                {!isAddingCategory && localCategories.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                        {localCategories.map(c => (
+                            <div key={c} className="inline-flex items-center bg-gray-100 text-gray-700 px-2 py-1 rounded text-xs border border-gray-200">
+                                {c}
+                                <button 
+                                    type="button" 
+                                    onClick={() => handleRemoveCategory(c)} 
+                                    className="ml-1 text-gray-400 hover:text-red-500 p-0.5 rounded-full hover:bg-gray-200"
+                                    title="Remove Category"
+                                >
+                                    <TrashIcon />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
+
+            {/* Assignees */}
             <div>
-               <label className="block text-sm font-medium text-gray-700 mb-2">Assign Team Members</label>
-               <div className="border border-gray-200 rounded-md p-3 max-h-40 overflow-y-auto bg-gray-50">
-                  {membersList.length === 0 ? <p className="text-xs text-gray-500 italic">No members found.</p> : (
-                      <div className="grid grid-cols-2 gap-2">
-                        {membersList.map((m) => {
-                           const mUid = typeof m === 'object' ? m.uid : m;
-                           const mLabel = typeof m === 'object' ? m.label : m; 
-                           const isSelected = assignees.includes(mUid);
-                           return (
-                             <label key={mUid} className={`flex items-center gap-3 p-2 rounded cursor-pointer border transition-colors ${isSelected ? 'bg-blue-50 border-blue-300' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
-                                <input type="checkbox" checked={isSelected} onChange={() => toggleAssignee(mUid)} className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded" />
-                                <span className="text-sm text-gray-700 truncate select-none">{mLabel}</span>
-                             </label>
-                           );
-                        })}
-                      </div>
-                  )}
-               </div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Assign Members</label>
+                <div className="border border-gray-300 rounded-md max-h-32 overflow-y-auto p-2 space-y-1">
+                    {membersList.map(m => (
+                        <label key={m.uid} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:bg-gray-50 p-1 rounded">
+                            <input 
+                                type="checkbox" 
+                                checked={assignees.includes(m.uid)}
+                                onChange={e => {
+                                    if(e.target.checked) setAssignees([...assignees, m.uid]);
+                                    else setAssignees(assignees.filter(id => id !== m.uid));
+                                }}
+                                className="rounded text-blue-600"
+                            />
+                            {m.label}
+                        </label>
+                    ))}
+                </div>
             </div>
-            {error && <div className="p-3 bg-red-50 border border-red-200 rounded text-red-600 text-sm">{error}</div>}
-          </form>
-        </div>
-        <div className="flex justify-end items-center gap-3 p-4 border-t bg-gray-50 rounded-b-lg">
-          <button type="button" onClick={onClose} disabled={isSaving} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50">{t('common.cancel', 'Cancel')}</button>
-          <button type="submit" form="create-project-form" disabled={isSaving} className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-blue-300 flex items-center shadow-sm">
-            {isSaving && <div className="animate-spin -ml-1 mr-2 h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>}
-            {t('common.save', 'Create Project')}
-          </button>
-        </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={onClose} className="px-4 py-2 text-gray-600 text-sm hover:bg-gray-100 rounded-md">Cancel</button>
+                <button type="submit" disabled={isSubmitting} className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded-md hover:bg-blue-700 disabled:opacity-50">
+                    {isSubmitting ? 'Creating...' : 'Create Project'}
+                </button>
+            </div>
+        </form>
       </div>
     </div>
   );

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
-  doc, getDoc, collection, query, orderBy, onSnapshot, deleteDoc
+  doc, getDoc, collection, query, orderBy, onSnapshot, deleteDoc, updateDoc
 } from "firebase/firestore";
 import { db, auth } from '../firebaseConfig';
 import { onAuthStateChanged } from "firebase/auth";
@@ -20,6 +20,7 @@ const ChevronRightIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0
 const PlusIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>;
 const TrashIcon = () => <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>;
 const FolderIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>;
+const FolderOpenIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>;
 const AlertIcon = () => <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>;
 const UserGroupIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg>;
 const MegaphoneIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" /></svg>;
@@ -49,9 +50,34 @@ const linkify = (text) => {
   return parts.map((part, i) => part.match(urlRegex) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{part}</a> : part);
 };
 
-// --- Members List Modal ---
-const MembersListModal = ({ isOpen, onClose, members, onInvite }) => {
+// --- Members List Modal (UPDATED) ---
+const MembersListModal = ({ isOpen, onClose, members, onInvite, teamId, isWorkAdmin }) => {
   if (!isOpen) return null;
+
+  const handleRoleChange = async (uid, newRole) => {
+      try {
+          const teamRef = doc(db, 'teams', teamId);
+          const teamSnap = await getDoc(teamRef);
+          if (!teamSnap.exists()) return;
+
+          const currentMembers = teamSnap.data().members || [];
+          // Update the role for the matching UID
+          const updatedMembers = currentMembers.map(m => {
+              const mUid = typeof m === 'object' ? m.uid : m;
+              if (mUid === uid) {
+                  return { uid: mUid, role: newRole };
+              }
+              // Ensure we don't break existing string-only entries if they exist
+              return typeof m === 'string' ? { uid: m, role: 'Member' } : m;
+          });
+
+          await updateDoc(teamRef, { members: updatedMembers });
+      } catch (error) {
+          console.error("Failed to update role:", error);
+          alert("Failed to update role.");
+      }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-md flex flex-col max-h-[80vh] overflow-hidden">
@@ -65,13 +91,33 @@ const MembersListModal = ({ isOpen, onClose, members, onInvite }) => {
           ) : (
               <div className="space-y-1">
                   {members.map(m => (
-                    <div key={m.uid} className="flex items-center gap-3 p-2 hover:bg-blue-50 rounded-lg border border-transparent hover:border-blue-100 transition-colors">
-                      <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold flex-shrink-0">
-                        {(m.displayName || m.email || '?')[0].toUpperCase()}
+                    <div key={m.uid} className="flex items-center justify-between gap-3 p-2 hover:bg-blue-50 rounded-lg border border-transparent hover:border-blue-100 transition-colors">
+                      <div className="flex items-center gap-3 flex-1 overflow-hidden">
+                          <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold flex-shrink-0">
+                            {(m.displayName || m.email || '?')[0].toUpperCase()}
+                          </div>
+                          <div className="flex-1 overflow-hidden">
+                            <p className="text-sm font-bold text-gray-800 truncate">{m.displayName || 'Unnamed User'}</p>
+                            <p className="text-xs text-gray-500 truncate">{m.email}</p>
+                          </div>
                       </div>
-                      <div className="flex-1 overflow-hidden">
-                        <p className="text-sm font-bold text-gray-800 truncate">{m.displayName || 'Unnamed User'}</p>
-                        <p className="text-xs text-gray-500 truncate">{m.email}</p>
+                      
+                      {/* Role Selector */}
+                      <div className="flex-shrink-0">
+                          {isWorkAdmin ? (
+                              <select 
+                                  value={m.role || 'Member'} 
+                                  onChange={(e) => handleRoleChange(m.uid, e.target.value)}
+                                  className="text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                              >
+                                  <option value="Member">Member</option>
+                                  <option value="Admin">Admin</option>
+                              </select>
+                          ) : (
+                              <span className="text-xs font-medium px-2 py-1 bg-gray-100 text-gray-600 rounded">
+                                  {m.role || 'Member'}
+                              </span>
+                          )}
                       </div>
                     </div>
                   ))}
@@ -136,20 +182,6 @@ const AnnouncementsSection = ({ teamId, isAdmin, onEdit }) => {
   );
 };
 
-// --- Sidebar Item Helper ---
-const SidebarItem = ({ icon, label, active, onClick, hasSubmenu, expanded }) => (
-    <button 
-        onClick={onClick}
-        className={`w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium transition-colors ${active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-    >
-        <div className="flex items-center gap-3">
-            {icon}
-            <span>{label}</span>
-        </div>
-        {hasSubmenu && (expanded ? <ChevronDownIcon /> : <ChevronRightIcon />)}
-    </button>
-);
-
 const TeamView = () => {
   const { teamId } = useParams();
   const navigate = useNavigate();
@@ -163,9 +195,13 @@ const TeamView = () => {
   const [announcementRefreshKey, setAnnouncementRefreshKey] = useState(0);
 
   // --- Project State ---
-  const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null); // 'all' or specific ID
+  const [projects, setProjects] = useState([]); 
+  const [selectedProjectId, setSelectedProjectId] = useState(null); 
   const [categoriesList, setCategoriesList] = useState([]);
+
+  // --- My Tasks Filter State ---
+  const [myTasksExpanded, setMyTasksExpanded] = useState(false);
+  const [myTaskStatusFilter, setMyTaskStatusFilter] = useState('All');
 
   // --- Sidebar State ---
   const [sidebarState, setSidebarState] = useState({
@@ -176,12 +212,15 @@ const TeamView = () => {
   // Modals
   const [isFAQModalOpen, setIsFAQModalOpen] = useState(false);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
-  const [isMembersListOpen, setIsMembersListOpen] = useState(false); // New state for list modal
+  const [isMembersListOpen, setIsMembersListOpen] = useState(false); 
   const [isAnnounceModalOpen, setIsAnnounceModalOpen] = useState(false);
   const [isViewAnnounceModalOpen, setIsViewAnnounceModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
+  
+  // NEW: State to track which parent project we are adding a sub-project to
+  const [targetParentId, setTargetParentId] = useState(null);
 
   const [isMasterAdmin, setIsMasterAdmin] = useState(false);
 
@@ -193,7 +232,6 @@ const TeamView = () => {
     return unsub;
   }, [navigate, teamId]);
 
-  // Fetch Team & Members
   const fetchTeamAndMembers = useCallback(async () => {
     if (!teamId || !currentUser) return;
     setIsLoading(true); setError(null);
@@ -249,7 +287,7 @@ const TeamView = () => {
       if (!window.confirm(`Are you sure you want to delete project: "${projectTitle}"?\nThis cannot be undone.`)) return;
       try {
           await deleteDoc(doc(db, `teams/${teamId}/handovers`, projectId));
-          if (selectedProjectId === projectId) setSelectedProjectId(null); // Reset selection
+          if (selectedProjectId === projectId) setSelectedProjectId(null); 
       } catch (err) {
           alert("Error deleting project");
           console.error(err);
@@ -258,6 +296,20 @@ const TeamView = () => {
 
   const isTeamCreator = teamData?.createdBy === currentUser?.uid;
   const isWorkAdmin = isTeamCreator || isMasterAdmin;
+
+  // --- Helper to get parent projects (those without parentId) ---
+  const parentProjects = projects.filter(p => !p.parentId);
+  // --- Helper to get children for a specific parent ---
+  const getSubProjects = (parentId) => projects.filter(p => p.parentId === parentId);
+
+  // --- Combine member details with roles ---
+  const membersWithRoles = membersDetails.map(member => {
+      const rawMember = teamData?.members?.find(m => (typeof m === 'object' ? m.uid : m) === member.uid);
+      return {
+          ...member,
+          role: (typeof rawMember === 'object' && rawMember.role) ? rawMember.role : 'Member'
+      };
+  });
 
   return (
     <>
@@ -298,6 +350,55 @@ const TeamView = () => {
 
                     <div className="my-2 border-t border-gray-100 mx-4"></div>
 
+                    {/* MY ASSIGNED TASKS (DROPDOWN) */}
+                    <div className="px-4">
+                        <button 
+                            onClick={() => {
+                                setSelectedProjectId('my_tasks');
+                                setMyTasksExpanded(!myTasksExpanded);
+                            }}
+                            className={`w-full flex items-center justify-between px-3 py-2 text-sm font-medium rounded-lg transition-colors ${selectedProjectId === 'my_tasks' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
+                        >
+                            <div className="flex items-center gap-2">
+                                <ClipboardIcon />
+                                <span>My Assigned Tasks</span>
+                            </div>
+                            {myTasksExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                        </button>
+
+                        {/* Collapsible Content */}
+                        {myTasksExpanded && (
+                            <div className="ml-4 mt-1 pl-3 border-l-2 border-gray-100 space-y-1">
+                                <button 
+                                    onClick={() => { setMyTaskStatusFilter('All'); setSelectedProjectId('my_tasks'); }} 
+                                    className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'All' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    All status
+                                </button>
+                                <button 
+                                    onClick={() => { setMyTaskStatusFilter('In Progress'); setSelectedProjectId('my_tasks'); }} 
+                                    className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'In Progress' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    On-going
+                                </button>
+                                <button 
+                                    onClick={() => { setMyTaskStatusFilter('QA'); setSelectedProjectId('my_tasks'); }} 
+                                    className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'QA' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    QA
+                                </button>
+                                <button 
+                                    onClick={() => { setMyTaskStatusFilter('Completed'); setSelectedProjectId('my_tasks'); }} 
+                                    className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'Completed' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    Completed
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="my-2 border-t border-gray-100 mx-4"></div>
+
                     {/* PROJECT LIST */}
                     <div className="px-4 mb-1 flex items-center justify-between group">
                         <button 
@@ -309,7 +410,7 @@ const TeamView = () => {
                         </button>
                         {isWorkAdmin && (
                             <button 
-                                onClick={() => setIsAddProjectModalOpen(true)}
+                                onClick={() => { setTargetParentId(null); setIsAddProjectModalOpen(true); }}
                                 className="text-gray-400 hover:text-blue-600 p-1 rounded"
                                 title="Create New Project"
                             >
@@ -328,47 +429,80 @@ const TeamView = () => {
                                 <div className="flex-1 truncate">All Tasks</div>
                             </button>
 
-                            {/* Individual Projects */}
-                            {projects.map(proj => (
-                                <div key={proj.id} className="relative group">
-                                    <button 
-                                        onClick={() => setSelectedProjectId(proj.id)}
-                                        className={`w-full text-left flex items-center px-3 py-2 text-sm rounded-md transition-colors pr-8 ${selectedProjectId === proj.id ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
-                                    >
-                                        <div className="flex items-center gap-2 truncate">
-                                            <FolderIcon />
-                                            <span className="truncate">{proj.title}</span>
+                            {/* Parent Projects + Sub Projects Loop */}
+                            {parentProjects.map(proj => {
+                                const subProjects = getSubProjects(proj.id);
+                                const isSelected = selectedProjectId === proj.id;
+                                
+                                return (
+                                    <div key={proj.id} className="relative">
+                                        {/* Parent Project Item */}
+                                        <div className="group flex items-center w-full rounded-md hover:bg-gray-50 pr-1">
+                                            <button 
+                                                onClick={() => setSelectedProjectId(proj.id)}
+                                                className={`flex-1 text-left flex items-center px-3 py-2 text-sm rounded-md transition-colors ${isSelected ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}
+                                            >
+                                                <div className="flex items-center gap-2 truncate">
+                                                    {subProjects.length > 0 ? <FolderOpenIcon /> : <FolderIcon />}
+                                                    <span className="truncate">{proj.title}</span>
+                                                </div>
+                                            </button>
+                                            
+                                            {/* Action Buttons for Parent (Add Sub, Delete) */}
+                                            {isWorkAdmin && (
+                                                <div className="hidden group-hover:flex items-center gap-1 pl-1">
+                                                    <button 
+                                                        onClick={(e) => { e.stopPropagation(); setTargetParentId(proj.id); setIsAddProjectModalOpen(true); }}
+                                                        className="text-gray-400 hover:text-blue-600 p-1 rounded"
+                                                        title="Add Sub-Project"
+                                                    >
+                                                        <PlusIcon />
+                                                    </button>
+                                                    <button 
+                                                        onClick={(e) => deleteProject(e, proj.id, proj.title)}
+                                                        className="text-gray-300 hover:text-red-500 p-1"
+                                                        title="Delete Project"
+                                                    >
+                                                        <TrashIcon />
+                                                    </button>
+                                                </div>
+                                            )}
                                         </div>
-                                    </button>
-                                    {isWorkAdmin && (
-                                        <button 
-                                            onClick={(e) => deleteProject(e, proj.id, proj.title)}
-                                            className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"
-                                            title="Delete Project"
-                                        >
-                                            <TrashIcon />
-                                        </button>
-                                    )}
-                                </div>
-                            ))}
+
+                                        {/* Sub Projects List */}
+                                        {subProjects.length > 0 && (
+                                            <div className="ml-6 space-y-0.5 border-l-2 border-gray-100 pl-2 mt-0.5 mb-1">
+                                                {subProjects.map(sub => (
+                                                    <div key={sub.id} className="group flex items-center justify-between hover:bg-gray-50 rounded-md pr-1">
+                                                        <button 
+                                                            onClick={() => setSelectedProjectId(sub.id)}
+                                                            className={`flex-1 text-left flex items-center px-2 py-1.5 text-xs rounded-md transition-colors ${selectedProjectId === sub.id ? 'text-blue-700 font-bold' : 'text-gray-500 hover:text-gray-800'}`}
+                                                        >
+                                                            <FolderIcon />
+                                                            <span className="ml-2 truncate">{sub.title}</span>
+                                                        </button>
+                                                        {isWorkAdmin && (
+                                                            <button 
+                                                                onClick={(e) => deleteProject(e, sub.id, sub.title)}
+                                                                className="hidden group-hover:block text-gray-300 hover:text-red-500 p-1"
+                                                                title="Delete Sub-Project"
+                                                            >
+                                                                <TrashIcon />
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            
                             {projects.length === 0 && (
                                 <div className="px-4 py-2 text-xs text-gray-400 italic">No projects yet.</div>
                             )}
                         </div>
                     )}
-
-                    <div className="my-2 border-t border-gray-100 mx-4"></div>
-                    
-                    {/* MY TASKS SHORTCUT */}
-                    <div className="px-4">
-                        <button 
-                            onClick={() => setSelectedProjectId('my_tasks')} // Special ID for filtering my tasks across all projects
-                            className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium rounded-lg transition-colors ${selectedProjectId === 'my_tasks' ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50'}`}
-                        >
-                            <ClipboardIcon />
-                            <span>My Assigned Tasks</span>
-                        </button>
-                    </div>
 
                 </div>
 
@@ -401,8 +535,10 @@ const TeamView = () => {
                              </h2>
                              <p className="text-xs text-gray-500">
                                  {selectedProjectId === null ? `Viewing tasks from all ${projects.length} projects` : 
-                                  selectedProjectId === 'my_tasks' ? 'Tasks assigned specifically to you' :
-                                  'Viewing project specific tasks'}
+                                  selectedProjectId === 'my_tasks' ? `Tasks assigned to you (${myTaskStatusFilter === 'All' ? 'All' : myTaskStatusFilter})` :
+                                  projects.find(p => p.id === selectedProjectId)?.parentId ? 
+                                    `Sub-project of ${projects.find(parent => parent.id === projects.find(p => p.id === selectedProjectId).parentId)?.title}` 
+                                    : 'Viewing project specific tasks'}
                              </p>
                         </div>
                         
@@ -426,6 +562,7 @@ const TeamView = () => {
                                 isTeamCreator={isTeamCreator}
                                 currentUserUid={currentUser?.uid}
                                 selectedProjectId={selectedProjectId} // Passing the selection down
+                                myTaskStatusFilter={myTaskStatusFilter} // PASSING FILTER PROP
                              />
                         </div>
                     </div>
@@ -450,11 +587,13 @@ const TeamView = () => {
           </div>
       )}
 
-      {/* MEMBERS LIST MODAL */}
+      {/* MEMBERS LIST MODAL (Updated with roles) */}
       <MembersListModal 
           isOpen={isMembersListOpen}
           onClose={() => setIsMembersListOpen(false)}
-          members={membersDetails}
+          members={membersWithRoles} // Pass members with roles
+          teamId={teamId}
+          isWorkAdmin={isWorkAdmin}
           onInvite={() => setIsInviteModalOpen(true)}
       />
 
@@ -467,6 +606,7 @@ const TeamView = () => {
         categoriesList={categoriesList || ['General']}
         membersList={membersDetails.map(m => ({ uid: m.uid, label: m.displayName || m.email }))}
         onEndorsementAdded={() => setIsAddProjectModalOpen(false)}
+        parentId={targetParentId} // Pass the parentId if creating a sub-project
       />
 
       <InviteMemberModal t={t} isOpen={isInviteModalOpen} onClose={() => setIsInviteModalOpen(false)} teamId={teamId} />
