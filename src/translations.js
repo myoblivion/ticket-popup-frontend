@@ -71,7 +71,7 @@ export const translations = {
     },
     // --- HOME SCREEN ---
     home: {
-      yourProjects: 'Your Projects',
+      yourProjects: 'Your Teams',
       yourTeams: 'Your Teams', 
       createMainProject: '+ New Team',
       createTeam: '+ Create Team', 
