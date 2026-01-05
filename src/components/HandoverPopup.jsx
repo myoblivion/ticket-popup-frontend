@@ -2,8 +2,8 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import { db, auth } from '../firebaseConfig';
 import { 
-  doc, getDoc, updateDoc, addDoc, collection, serverTimestamp, 
-  query, where, onSnapshot, orderBy 
+  doc, updateDoc, addDoc, collection, serverTimestamp, 
+  query, orderBy, onSnapshot, where
 } from 'firebase/firestore'; 
 import { LanguageContext } from '../contexts/LanguageContext';
 
@@ -22,7 +22,7 @@ const sendTelegramNotification = async (chatId, type, details, teamId) => {
     if (!TELEGRAM_BOT_TOKEN || !chatId) return;
     const { userName, projectName, taskName, duration, projectUrl, notes, fileCount } = details;
     const now = new Date().toLocaleString();
-    const linkHtml = projectUrl ? `\n\n🔗 ${projectUrl}` : '';
+    const linkHtml = projectUrl ? `\n\n🔗 <a href="${projectUrl}">Open Task</a>` : '';
     let message = '';
     
     switch (type) {
@@ -53,16 +53,11 @@ const sendTelegramNotification = async (chatId, type, details, teamId) => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true })
             });
-            
             const data = await response.json();
-
-            // Auto-fix for Supergroup Migration
             if (!data.ok && data.error_code === 400 && data.parameters?.migrate_to_chat_id) {
-                console.log("Telegram Group Migrated. Updating DB...");
-                const newChatId = data.parameters.migrate_to_chat_id;
                 if (teamId) {
-                    await updateDoc(doc(db, 'teams', teamId), { telegramChatId: newChatId });
-                    await sendTelegramNotification(newChatId, type, details, teamId);
+                    await updateDoc(doc(db, 'teams', teamId), { telegramChatId: data.parameters.migrate_to_chat_id });
+                    await sendTelegramNotification(data.parameters.migrate_to_chat_id, type, details, teamId);
                 }
             }
         } catch (error) { console.error("Failed to send Telegram notification", error); }
@@ -82,43 +77,32 @@ const LiveDuration = ({ startTime, isPaused }) => {
     useEffect(() => {
         if (!startTime) return;
         const start = startTime.toDate ? startTime.toDate() : new Date(startTime);
-        const tick = () => setElapsed(new Date() - start);
-        tick(); 
-        const interval = setInterval(tick, 1000); 
+        setElapsed(new Date() - start);
+        const interval = setInterval(() => { setElapsed(new Date() - start); }, 1000); 
         return () => clearInterval(interval);
     }, [startTime]);
     return <span className={`font-mono text-xl font-bold ${isPaused ? 'text-orange-500' : 'text-green-600'}`}>{isPaused ? 'Paused: ' : ''}{formatDuration(elapsed)}</span>;
 };
 
-// --- MAIN COMPONENT ---
 const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [], currentUserUid }) => {
   const { t } = useContext(LanguageContext);
   const [projectData, setProjectData] = useState(null);
-  const [taskData, setTaskData] = useState(null);
+  const [taskData, setTaskData] = useState(null); // Derived from projectData
   const [loading, setLoading] = useState(true);
   const [telegramChatId, setTelegramChatId] = useState(null);
-
-  // --- COMMENTS ---
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
   const messagesEndRef = useRef(null);
-
-  // --- ACTIVE SESSION ---
   const [activeSession, setActiveSession] = useState(null);
-
-  // --- SUBMISSION MODAL ---
   const [submissionModal, setSubmissionModal] = useState(false);
   const [submissionNote, setSubmissionNote] = useState('');
   const [submissionImages, setSubmissionImages] = useState([]); 
   const [submissionFiles, setSubmissionFiles] = useState([]); 
-
-  // --- REVISION MODAL ---
   const [revisionModal, setRevisionModal] = useState(false);
   const [revisionReason, setRevisionReason] = useState('');
-
-  // --- IMAGE PREVIEW MODAL ---
-  const [previewImage, setPreviewImage] = useState(null);
-
+  const [previewImage, setPreviewImage] = useState(null); 
+  
+  // Derived state for creator
   const [isCreator, setIsCreator] = useState(false);
 
   const resolveName = (uid) => {
@@ -127,30 +111,44 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
     return member ? (member.displayName || member.email) : 'Unknown User';
   };
 
-  // 1. Fetch Project & Find Task
+  // --- 1. REAL-TIME DATA FETCHING (Fixed) ---
   useEffect(() => {
     if (!teamId || !handoverId) return;
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const docRef = doc(db, 'teams', teamId, 'handovers', handoverId);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const d = docSnap.data();
-          setProjectData({ id: docSnap.id, ...d });
-          if (auth.currentUser && d.createdBy === auth.currentUser.uid) setIsCreator(true);
-          const foundTask = d.projectTasks?.find(t => t.id === taskId);
-          setTaskData(foundTask || null);
-        }
-        const teamRef = doc(db, 'teams', teamId);
-        const teamSnap = await getDoc(teamRef);
-        if (teamSnap.exists() && teamSnap.data().telegramChatId) setTelegramChatId(teamSnap.data().telegramChatId);
-      } catch (err) { console.error("Error fetching details:", err); } finally { setLoading(false); }
-    };
-    fetchData();
-  }, [teamId, handoverId, taskId]);
+    setLoading(true);
 
-  // 2. Fetch Comments 
+    const docRef = doc(db, 'teams', teamId, 'handovers', handoverId);
+    
+    // Listen to Project/Task Changes
+    const unsubProject = onSnapshot(docRef, (docSnap) => {
+        if (docSnap.exists()) {
+            const d = docSnap.data();
+            setProjectData({ id: docSnap.id, ...d });
+            
+            // Check Creator Status immediately
+            if (currentUserUid && d.postedBy === currentUserUid) setIsCreator(true);
+            else if (currentUserUid && d.createdBy === currentUserUid) setIsCreator(true);
+            else setIsCreator(false);
+
+            // Find specific task
+            const foundTask = d.projectTasks?.find(t => t.id === taskId);
+            setTaskData(foundTask || null);
+        }
+        setLoading(false);
+    });
+
+    // Get Team Data (for Telegram ID - one time fetch is usually fine, or listen if needed)
+    const teamRef = doc(db, 'teams', teamId);
+    // We can keep this one-time or make it realtime. One-time is usually safe for config.
+    import('firebase/firestore').then(({getDoc}) => {
+        getDoc(teamRef).then(snap => {
+            if(snap.exists()) setTelegramChatId(snap.data().telegramChatId);
+        });
+    });
+
+    return () => unsubProject();
+  }, [teamId, handoverId, taskId, currentUserUid]);
+
+  // --- COMMENTS LISTENER ---
   useEffect(() => {
       if(!teamId || !handoverId) return;
       const q = query(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), orderBy('createdAt', 'asc'));
@@ -161,10 +159,15 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
       return () => unsub();
   }, [teamId, handoverId]);
 
-  // 3. Monitor Active Session
+  // --- ACTIVE SESSION LISTENER ---
   useEffect(() => {
       if(!currentUserUid || !teamId || !handoverId) return;
-      const q = query(collection(db, 'teams', teamId, 'workLogs'), where('userId', '==', currentUserUid), where('handoverId', '==', handoverId), where('status', 'in', ['active', 'paused']));
+      const q = query(
+        collection(db, 'teams', teamId, 'workLogs'),
+        where('userId', '==', currentUserUid),
+        where('handoverId', '==', handoverId),
+        where('status', 'in', ['active', 'paused'])
+      );
       const unsub = onSnapshot(q, (snapshot) => {
           if (!snapshot.empty) setActiveSession({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() });
           else setActiveSession(null);
@@ -172,33 +175,39 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
       return () => unsub();
   }, [teamId, handoverId, currentUserUid]);
 
-  // --- ACTIONS ---
+  // --- UPDATE HELPER ---
   const handleUpdateTaskStatus = async (newStatus, additionalData = {}) => {
       try {
+          // We read fresh, update, and write. The onSnapshot above will update the UI.
           const docRef = doc(db, 'teams', teamId, 'handovers', handoverId);
-          const docSnap = await getDoc(docRef);
-          if (!docSnap.exists()) return;
+          // Note: using transaction is safer, but standard get/update is usually fine here
+          // For simplicity/consistency with existing code structure:
+          const latestSnap = await import('firebase/firestore').then(({getDoc}) => getDoc(docRef));
           
-          let tasks = docSnap.data().projectTasks || [];
+          if (!latestSnap.exists()) return;
+          
+          let tasks = latestSnap.data().projectTasks || [];
           const taskIndex = tasks.findIndex(t => t.id === taskId);
           if (taskIndex === -1) return;
-
+          
           tasks[taskIndex].status = newStatus;
-          if (Object.keys(additionalData).length > 0) tasks[taskIndex] = { ...tasks[taskIndex], ...additionalData };
-
+          if (Object.keys(additionalData).length > 0) {
+              tasks[taskIndex] = { ...tasks[taskIndex], ...additionalData };
+          }
+          
           await updateDoc(docRef, { projectTasks: tasks });
-          setTaskData({ ...tasks[taskIndex] });
+          // No need to manually setTaskData, the listener handles it.
       } catch (err) { console.error("Error updating status:", err); }
   };
 
   const handleToggleWork = async (actionType) => {
       if(!currentUserUid || !taskData) return;
       const userName = auth.currentUser?.displayName || 'Unknown';
-      const projectUrl = `${window.location.origin}/team/${teamId}`;
-
+      const projectUrl = `${window.location.origin}/team/${teamId}?handoverId=${handoverId}&taskId=${taskId}`;
+      
       try {
           if (actionType === 'start' || actionType === 'resume') handleUpdateTaskStatus('In Progress');
-
+          
           if (activeSession) {
               const logRef = doc(db, 'teams', teamId, 'workLogs', activeSession.id);
               const endTime = new Date();
@@ -208,7 +217,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
               
               if (actionType === 'pause') sendTelegramNotification(telegramChatId, 'pause', { userName, projectName: projectData.title, taskName: taskData.title, duration: durationStr, projectUrl }, teamId);
           }
-
+          
           if (actionType === 'start' || actionType === 'resume') {
               await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
                   type: 'task', action: 'Working', userName, userId: currentUserUid, handoverId, taskId, taskTitle: taskData.title, startTime: serverTimestamp(), status: 'active', createdAt: serverTimestamp()
@@ -220,15 +229,10 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
 
   const handleConfirmSubmit = async () => {
       const userName = auth.currentUser?.displayName || 'Unknown';
-      const details = { 
-        userName, 
-        projectName: projectData.title, 
-        taskName: taskData.title, 
-        notes: submissionNote, 
-        fileCount: submissionImages.length + submissionFiles.length, 
-        projectUrl: `${window.location.origin}/team/${teamId}` 
-      };
-
+      const projectUrl = `${window.location.origin}/team/${teamId}?handoverId=${handoverId}&taskId=${taskId}`;
+      
+      const details = { userName, projectName: projectData.title, taskName: taskData.title, notes: submissionNote, fileCount: submissionImages.length + submissionFiles.length, projectUrl };
+      
       if (activeSession) {
           const logRef = doc(db, 'teams', teamId, 'workLogs', activeSession.id);
           const endTime = new Date();
@@ -239,14 +243,15 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
       } else {
           sendTelegramNotification(telegramChatId, 'submit', { ...details, duration: 'N/A' }, teamId);
       }
-
-      await handleUpdateTaskStatus('QA', {
-          submission: {
-              note: submissionNote,
-              images: submissionImages,
-              files: submissionFiles,
-              submittedBy: currentUserUid,
-              submittedAt: new Date().toISOString()
+      
+      // Updates status to QA -> Listener updates UI -> Buttons disappear
+      await handleUpdateTaskStatus('QA', { 
+          submission: { 
+              note: submissionNote, 
+              images: submissionImages, 
+              files: submissionFiles, 
+              submittedBy: currentUserUid, 
+              submittedAt: new Date().toISOString() 
           }
       });
       setSubmissionModal(false);
@@ -255,21 +260,11 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
   const handleConfirmRevision = async () => {
     if (!revisionReason.trim()) return alert("Please provide a reason.");
     const userName = auth.currentUser?.displayName || 'Unknown';
+    const projectUrl = `${window.location.origin}/team/${teamId}?handoverId=${handoverId}&taskId=${taskId}`;
     
-    await handleUpdateTaskStatus('Revision', {
-        revisionFeedback: {
-            reason: revisionReason,
-            requestedBy: currentUserUid,
-            requestedAt: new Date().toISOString()
-        }
-    });
-
-    sendTelegramNotification(telegramChatId, 'revision', { 
-        userName, projectName: projectData.title, taskName: taskData.title, notes: revisionReason, projectUrl: `${window.location.origin}/team/${teamId}` 
-    }, teamId);
-
-    setRevisionModal(false);
-    setRevisionReason('');
+    await handleUpdateTaskStatus('Revision', { revisionFeedback: { reason: revisionReason, requestedBy: currentUserUid, requestedAt: new Date().toISOString() }}); 
+    sendTelegramNotification(telegramChatId, 'revision', { userName, projectName: projectData.title, taskName: taskData.title, notes: revisionReason, projectUrl }, teamId);
+    setRevisionModal(false); setRevisionReason('');
   };
 
   const processPaste = (e, setImagesFunc) => {
@@ -309,29 +304,29 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
   const isActive = activeSession && activeSession.taskId === taskId && activeSession.status === 'active';
   const isPaused = activeSession && activeSession.taskId === taskId && activeSession.status === 'paused';
   const isRevision = taskData?.status === 'Revision';
+  const isQA = taskData?.status === 'QA';
+  const isCompleted = taskData?.status === 'Completed';
+
+  // LOGIC FIX: Workers cannot start work if it's in QA or Completed
+  const showWorkerActions = isAssigned && !isCompleted && !isQA;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm">
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-[95vw] h-[92vh] flex flex-col overflow-hidden animate-fade-in-up">
-        
         {/* HEADER */}
         <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 bg-white">
           <div>
              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{projectData?.title || 'Project'}</h3>
              <h2 className="text-xl font-extrabold text-slate-800">{loading ? 'Loading...' : (taskData?.title || 'Task Details')}</h2>
           </div>
-          <button onClick={onClose} className="bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 p-2 rounded-full transition-all">
-             <CloseIcon />
-          </button>
+          <button onClick={onClose} className="bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 p-2 rounded-full transition-all"><CloseIcon /></button>
         </div>
 
         <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-slate-50">
-          
           {/* LEFT: MAIN CONTENT */}
           <div className="flex-1 p-6 overflow-y-auto custom-scrollbar flex flex-col">
              {!loading && taskData ? (
                  <div className="space-y-6">
-                      
                       {/* STATUS & ACTIONS CARD */}
                       <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                             <div className="flex items-center gap-2">
@@ -339,19 +334,14 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
                                 <span className={`px-3 py-1 rounded-full text-xs font-bold border ${taskData.priority === 'High' ? 'bg-red-50 text-red-600 border-red-100' : 'bg-blue-50 text-blue-600 border-blue-100'}`}>{taskData.priority}</span>
                             </div>
                             
-                            {/* WORK CONTROLS */}
-                            {isAssigned && taskData.status !== 'Completed' && (
+                            {/* WORKER ACTIONS (Hidden if QA or Completed) */}
+                            {showWorkerActions && (
                                 <div className="flex items-center gap-3">
                                     {isActive && <LiveDuration startTime={activeSession.startTime} isPaused={false} />}
                                     {isPaused && <span className="text-orange-500 font-mono font-bold text-lg">Paused</span>}
-                                    
                                     <div className="flex gap-2">
                                         {(!isActive && !isPaused) && (
-                                            <button 
-                                                onClick={() => handleToggleWork('start')} 
-                                                className={`px-6 py-2 rounded-lg font-bold shadow-sm transition flex items-center gap-2 text-white
-                                                    ${isRevision ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20' : 'bg-green-600 hover:bg-green-700 shadow-green-500/20'}`}
-                                            >
+                                            <button onClick={() => handleToggleWork('start')} className={`px-6 py-2 rounded-lg font-bold shadow-sm transition flex items-center gap-2 text-white ${isRevision ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-500/20' : 'bg-green-600 hover:bg-green-700 shadow-green-500/20'}`}>
                                                 {isRevision ? '🛠️ Start Revision Fix' : '🚀 Start Work'}
                                             </button>
                                         )}
@@ -365,21 +355,21 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
                                     </div>
                                 </div>
                             )}
+                            
+                            {/* QA STATUS MESSAGE */}
+                            {isQA && (
+                                <div className="flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-bold border border-purple-100">
+                                    <span>⏳ Under Review</span>
+                                </div>
+                            )}
                       </div>
 
                       {/* REVISION ALERT */}
                       {(taskData.status === 'Revision' || taskData.revisionFeedback) && (
                         <div className="bg-red-50 p-5 rounded-lg border border-red-200">
-                             <div className="flex items-center gap-2 mb-2">
-                                 <ExclamationIcon />
-                                 <span className="text-sm font-bold text-red-700 uppercase">Reviewer Feedback</span>
-                             </div>
-                             <div className="text-slate-700 text-sm whitespace-pre-wrap bg-white p-3 rounded border border-red-100">
-                                 {taskData.revisionFeedback?.reason || 'No specific feedback provided.'}
-                             </div>
-                             <div className="mt-2 text-[10px] text-red-400">
-                                Requested by {resolveName(taskData.revisionFeedback?.requestedBy)} on {new Date(taskData.revisionFeedback?.requestedAt).toLocaleString()}
-                             </div>
+                             <div className="flex items-center gap-2 mb-2"><ExclamationIcon /><span className="text-sm font-bold text-red-700 uppercase">Reviewer Feedback</span></div>
+                             <div className="text-slate-700 text-sm whitespace-pre-wrap bg-white p-3 rounded border border-red-100">{taskData.revisionFeedback?.reason || 'No specific feedback provided.'}</div>
+                             <div className="mt-2 text-[10px] text-red-400">Requested by {resolveName(taskData.revisionFeedback?.requestedBy)} on {new Date(taskData.revisionFeedback?.requestedAt).toLocaleString()}</div>
                         </div>
                       )}
 
@@ -393,33 +383,19 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
                       {( (taskData.images && taskData.images.length > 0) || (taskData.files && taskData.files.length > 0) || (taskData.links && taskData.links.length > 0) ) && (
                           <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-6">
                               <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2"><PaperClipIcon /> Resources</h4>
-                              
                               {taskData.links?.length > 0 && (
                                   <div className="mb-4 flex flex-col gap-2">
-                                      {taskData.links.map((link, i) => (
-                                          <a key={i} href={link} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-blue-600 hover:underline text-sm bg-blue-50 p-2 rounded border border-blue-100"><LinkIcon /> {link}</a>
-                                      ))}
+                                      {taskData.links.map((link, i) => (<a key={i} href={link} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-blue-600 hover:underline text-sm bg-blue-50 p-2 rounded border border-blue-100"><LinkIcon /> {link}</a>))}
                                   </div>
                               )}
-
                               <div className="flex gap-3 flex-wrap">
-                                  {taskData.images?.map((img, i) => (
-                                      <div key={i} className="relative group">
-                                         <img src={img} className="h-24 w-24 object-cover rounded-lg border shadow-sm cursor-zoom-in hover:scale-105 transition" onClick={() => setPreviewImage(img)} />
-                                      </div>
-                                  ))}
-                                  {taskData.files?.map((f, i) => (
-                                     <a key={i} href={f.data} download={f.name} className="h-24 w-24 bg-slate-50 border rounded-lg flex flex-col items-center justify-center p-2 text-center hover:bg-slate-100 transition cursor-pointer">
-                                          <FileIcon />
-                                          <span className="text-[10px] font-bold text-slate-600 uppercase line-clamp-2 mt-1">{f.name}</span>
-                                          <span className="text-[8px] text-slate-400 mt-0.5">DOWNLOAD</span>
-                                      </a>
-                                  ))}
+                                  {taskData.images?.map((img, i) => (<div key={i} className="relative group"><img src={img} className="h-24 w-24 object-cover rounded-lg border shadow-sm cursor-zoom-in hover:scale-105 transition" onClick={() => setPreviewImage(img)} /></div>))}
+                                  {taskData.files?.map((f, i) => (<a key={i} href={f.data} download={f.name} className="h-24 w-24 bg-slate-50 border rounded-lg flex flex-col items-center justify-center p-2 text-center hover:bg-slate-100 transition cursor-pointer"><FileIcon /><span className="text-[10px] font-bold text-slate-600 uppercase line-clamp-2 mt-1">{f.name}</span><span className="text-[8px] text-slate-400 mt-0.5">DOWNLOAD</span></a>))}
                               </div>
                           </div>
                       )}
 
-                      {/* SUBMISSION CARD (QA) */}
+                      {/* SUBMISSION CARD (QA) - VISIBLE IF SUBMISSION EXISTS */}
                       {taskData.submission && (
                           <div className="bg-purple-50 p-6 rounded-lg border border-purple-100 shadow-sm">
                               <div className="flex justify-between items-start mb-2">
@@ -427,19 +403,13 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
                                   <span className="text-[10px] text-purple-400">{new Date(taskData.submission.submittedAt).toLocaleString()}</span>
                               </div>
                               <p className="text-sm text-slate-700 mb-4 whitespace-pre-wrap">{taskData.submission.note}</p>
-                              
                               <div className="flex gap-2 overflow-x-auto pb-2">
                                   {taskData.submission.images?.map((img, i) => <img key={i} src={img} className="h-16 w-16 object-cover rounded border border-purple-200 cursor-zoom-in hover:opacity-80" onClick={() => setPreviewImage(img)} />)}
-                                  {taskData.submission.files?.map((f, i) => (
-                                      <a key={i} href={f.data} download={f.name} className="h-16 w-16 bg-white border border-purple-200 rounded flex flex-col items-center justify-center text-center p-1 hover:bg-purple-100 transition">
-                                          <FileIcon />
-                                          <span className="text-[8px] font-bold text-slate-600 line-clamp-2 w-full mt-1">{f.name}</span>
-                                      </a>
-                                  ))}
+                                  {taskData.submission.files?.map((f, i) => (<a key={i} href={f.data} download={f.name} className="h-16 w-16 bg-white border border-purple-200 rounded flex flex-col items-center justify-center text-center p-1 hover:bg-purple-100 transition"><FileIcon /><span className="text-[8px] font-bold text-slate-600 line-clamp-2 w-full mt-1">{f.name}</span></a>))}
                               </div>
                               
-                              {/* ADMIN QA ACTIONS */}
-                              {isCreator && taskData.status === 'QA' && (
+                              {/* CREATOR QA ACTIONS - ONLY VISIBLE IF CREATOR & STATUS IS QA */}
+                              {isCreator && isQA && (
                                   <div className="flex gap-3 mt-4 pt-4 border-t border-purple-200">
                                       <button onClick={() => setRevisionModal(true)} className="bg-white text-red-600 border border-red-200 px-4 py-2 rounded font-bold text-xs hover:bg-red-50 hover:border-red-300 transition-all flex items-center gap-2 shadow-sm">Request Revision</button>
                                       <button onClick={() => { if(window.confirm("Approve?")) handleUpdateTaskStatus('Completed'); }} className="bg-emerald-600 text-white px-4 py-2 rounded font-bold text-xs hover:bg-emerald-700 shadow-sm flex-1">Approve & Complete</button>
@@ -453,10 +423,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
 
           {/* RIGHT: DISCUSSION SIDEBAR */}
           <div className="w-full lg:w-[320px] border-l border-slate-200 bg-white flex flex-col h-full z-20">
-                <div className="p-4 bg-white border-b border-slate-100">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Discussion</h4>
-                </div>
-                
+                <div className="p-4 bg-white border-b border-slate-100"><h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Discussion</h4></div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/30">
                    {comments.map((msg) => (
                        <div key={msg.id} className="group">
