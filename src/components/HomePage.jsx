@@ -341,7 +341,8 @@ const HomePage = () => {
 
   return (
     <>
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      {/* UPDATED: Changed max-w-7xl to max-w-full to make it wider */}
+      <section className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <div className="flex flex-col sm:flex-row justify-between items-center mb-10 gap-4">
           <div>
             <h2 className="text-3xl font-bold text-gray-900 tracking-tight">{t('home.yourProjects', 'Your Projects')}</h2>
@@ -349,7 +350,6 @@ const HomePage = () => {
           </div>
           <div className="flex items-center gap-3">
             <button onClick={() => setIsCreateModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-2.5 px-5 rounded-lg shadow-sm hover:shadow-md transition-all flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clipRule="evenodd" /></svg>
               {t('home.createMainProject', 'New Project')}
             </button>
           </div>
@@ -365,7 +365,7 @@ const HomePage = () => {
                 <FolderIcon className="h-12 w-12 text-gray-300 mb-3" />
                 <p className="text-gray-500 text-lg font-medium">{t('home.noTeams', "You haven't joined any projects yet.")}</p>
                 <button onClick={() => setIsCreateModalOpen(true)} className="mt-4 text-blue-600 font-medium hover:underline">
-                    Create your first project &rarr;
+                    Create your first team &rarr;
                 </button>
               </div>
             ) : (

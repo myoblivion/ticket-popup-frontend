@@ -1,19 +1,10 @@
 // src/components/Header.jsx
-import React, { useState, useEffect, useContext } from 'react'; // --- IMPORT useContext ---
+import React, { useState, useEffect, useContext } from 'react';
 import { Link } from 'react-router-dom';
 import { signOut } from "firebase/auth";
 import { auth, db } from '../firebaseConfig';
-import { onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
-
-// --- REMOVE I18N IMPORT ---
-// import { useTranslation } from 'react-i18next';
-// --- END I18N IMPORT ---
-
-// --- NEW CONTEXT IMPORT ---
-import { LanguageContext } from '../contexts/LanguageContext.jsx'; // Import our new context
-// --- END NEW CONTEXT IMPORT ---
-
+import { LanguageContext } from '../contexts/LanguageContext.jsx'; 
 
 // Placeholder Icons (no changes)
 const BellIcon = () => (
@@ -26,9 +17,7 @@ const SearchIcon = () => (
 );
 
 const Header = ({ onNotificationClick }) => {
-    // --- USE CONTEXT HOOK ---
-    const { t } = useContext(LanguageContext); // Get 't' from our context
-    // --- END CONTEXT HOOK ---
+    const { t } = useContext(LanguageContext); 
 
     const [user, setUser] = useState(null);
     const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -97,14 +86,14 @@ const Header = ({ onNotificationClick }) => {
             // App.jsx routing will handle redirect
         } catch (error) {
             console.error("Logout Error:", error);
-            // --- USE T() FUNCTION (now from context) ---
             alert(t('header.logoutError'));
         }
     };
 
     return (
         <header className="bg-white shadow-md sticky top-0 z-50 w-full">
-            <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            {/* UPDATED: Changed max-w-7xl to max-w-full to span the whole width */}
+            <nav className="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between items-center h-16">
 
                     {/* Left: Dashboard/Brand */}
@@ -113,7 +102,6 @@ const Header = ({ onNotificationClick }) => {
                             to={isMasterAdmin ? "/admin-dashboard" : "/home"}
                             className="text-2xl font-bold text-gray-800 hover:text-blue-600 transition-colors"
                         >
-                            {/* --- USE T() FUNCTION --- */}
                             {t('header.dashboard')}
                         </Link>
                     </div>
@@ -123,7 +111,6 @@ const Header = ({ onNotificationClick }) => {
                         <div className="relative">
                             <input
                                 type="search"
-                                // --- USE T() FUNCTION ---
                                 placeholder={t('header.searchPlaceholder')}
                                 className="block w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 sm:text-sm transition duration-150 ease-in-out"
                             />
@@ -141,7 +128,6 @@ const Header = ({ onNotificationClick }) => {
                             onClick={onNotificationClick}
                             className="relative p-1 rounded-full text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 hover:bg-gray-100"
                         >
-                            {/* --- USE T() FUNCTION --- */}
                             <span className="sr-only">{t('header.viewNotifications')}</span>
                             <BellIcon />
                             {unreadCount > 0 && (
@@ -167,7 +153,6 @@ const Header = ({ onNotificationClick }) => {
                                     aria-haspopup="true"
                                     onClick={() => setShowUserDropdown(!showUserDropdown)}
                                 >
-                                    {/* --- USE T() FUNCTION --- */}
                                     <span className="sr-only">{t('header.openUserMenu')}</span>
                                     <span className={`inline-flex items-center justify-center h-8 w-8 rounded-full ${
                                         isMasterAdmin ? 'bg-yellow-500' : 'bg-gray-500'
@@ -187,14 +172,12 @@ const Header = ({ onNotificationClick }) => {
                                     role="menu" aria-orientation="vertical" aria-labelledby="user-menu-button" tabIndex="-1"
                                 >
                                     <div className="px-4 py-2 border-b border-gray-100">
-                                        {/* --- USE T() FUNCTION --- */}
                                         <p className="text-sm text-gray-500">{t('header.signedInAs')}</p>
                                         <p className="text-sm font-medium text-gray-900 truncate" title={user?.email || ''}>
                                             {user?.email || '...'}
                                         </p>
                                         {isMasterAdmin && (
                                             <span className="text-xs font-semibold bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full mt-1 inline-block">
-                                                {/* --- USE T() FUNCTION --- */}
                                                 {t('header.masterAdmin')}
                                             </span>
                                         )}
@@ -207,7 +190,6 @@ const Header = ({ onNotificationClick }) => {
                                             className="block px-4 py-2 text-sm font-semibold text-yellow-700 hover:bg-gray-100"
                                             role="menuitem" tabIndex="-1"
                                         >
-                                            {/* --- USE T() FUNCTION --- */}
                                             {t('header.adminDashboard')}
                                         </Link>
                                     )}
@@ -218,7 +200,6 @@ const Header = ({ onNotificationClick }) => {
                                         className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
                                         role="menuitem" tabIndex="-1"
                                     >
-                                        {/* --- USE T() FUNCTION --- */}
                                         {t('header.settings')}
                                     </Link>
                                     <button
@@ -226,7 +207,6 @@ const Header = ({ onNotificationClick }) => {
                                         className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
                                         role="menuitem" tabIndex="-1"
                                     >
-                                        {/* --- USE T() FUNCTION --- */}
                                         {t('header.logout')}
                                     </button>
                                 </div>

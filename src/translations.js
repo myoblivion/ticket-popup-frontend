@@ -73,7 +73,7 @@ export const translations = {
     home: {
       yourProjects: 'Your Projects',
       yourTeams: 'Your Teams', 
-      createMainProject: '+ New Main Project',
+      createMainProject: '+ New Team',
       createTeam: '+ Create Team', 
       subProjects: 'Sub-projects / Progress',
       noSubProjects: 'No sub-projects yet',
