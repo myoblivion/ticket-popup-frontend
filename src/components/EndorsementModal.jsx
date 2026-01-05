@@ -119,28 +119,31 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
     return new Date(isoString).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   };
 
-  // --- DEEP LINKING LOGIC ---
+  // --- DEEP LINKING LOGIC (UPDATED: Search via Task ID/No) ---
   useEffect(() => {
-    const linkHandoverId = searchParams.get('handoverId');
     const linkTaskId = searchParams.get('taskId');
 
-    if (linkHandoverId && linkTaskId) {
-        // CASE: URL has IDs -> Ensure Modal is OPEN
-        // Check local state to avoid unnecessary updates
-        if (!isDetailsModalOpen || selectedTaskContext?.taskId !== linkTaskId) {
-            setSelectedTaskContext({ handoverId: linkHandoverId, taskId: linkTaskId });
-            setIsDetailsModalOpen(true);
+    // Only proceed if we have a task ID in URL AND tasks are loaded
+    if (linkTaskId && tasks.length > 0) {
+        
+        // Find the task object that matches the ID or the Number
+        const foundTask = tasks.find(t => t.id === linkTaskId || String(t.taskNumber) === linkTaskId);
+
+        if (foundTask) {
+            // Found it! Open the modal using its internal handoverId
+            if (!isDetailsModalOpen || selectedTaskContext?.taskId !== foundTask.id) {
+                setSelectedTaskContext({ handoverId: foundTask.projectId, taskId: foundTask.id });
+                setIsDetailsModalOpen(true);
+            }
         }
-    } else {
+    } else if (!linkTaskId && isDetailsModalOpen) {
         // CASE: URL is empty -> Ensure Modal is CLOSED
-        if (isDetailsModalOpen) {
-            setIsDetailsModalOpen(false);
-            setSelectedTaskContext(null);
-        }
+        setIsDetailsModalOpen(false);
+        setSelectedTaskContext(null);
     }
-    // FIX: Dependency array ONLY contains searchParams to prevent race conditions
+    // Dependency on tasks ensures this runs once data loads
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]); 
+  }, [searchParams, tasks]); 
 
 
   // --- FETCH LOGIC ---
@@ -192,16 +195,12 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
 
         // --- "MY ASSIGNED TASKS" FILTER ---
         if (selectedProjectId === 'my_tasks') {
-          // 1. First, filter by user assignment
           allTasks = allTasks.filter(t => Array.isArray(t.assignedTo) && t.assignedTo.includes(currentUserUid));
 
-          // 2. Then, apply the status filter from the sidebar
           if (myTaskStatusFilter && myTaskStatusFilter !== 'All') {
             if (myTaskStatusFilter === 'In Progress') {
-              // "On-going" usually implies active work: Open, In Progress, or Revision
               allTasks = allTasks.filter(t => ['Open', 'In Progress', 'Revision'].includes(t.status));
             } else {
-              // For 'QA' and 'Completed', match exactly
               allTasks = allTasks.filter(t => t.status === myTaskStatusFilter);
             }
           }
@@ -376,8 +375,10 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
                   <tr
                     key={`${task.id}-${idx}`}
                     onClick={() => { 
-                        // SET URL, Let Effect handle opening.
-                        setSearchParams({ handoverId: task.projectId, taskId: task.id });
+                        // UPDATED: Only push taskId to URL (Prefer Task Number)
+                        setSearchParams({ 
+                            taskId: task.taskNumber || task.id 
+                        });
                     }}
                     className={`hover:bg-blue-50/50 cursor-pointer transition-colors ${isActive ? 'bg-green-50' : ''}`}
                   >
@@ -469,9 +470,8 @@ const HandoversSection = ({ teamId, membersDetails = [], isTeamCreator, currentU
           handoverId={selectedTaskContext.handoverId}
           taskId={selectedTaskContext.taskId}
           onClose={(e) => { 
-              // FIX: STOP PROPAGATION to prevent table row behind it from clicking
               if (e && e.stopPropagation) e.stopPropagation();
-              setSearchParams({}); // Clear URL (Effect will close modal)
+              setSearchParams({}); // Clear URL
           }}
           membersDetails={membersDetails}
           currentUserUid={currentUserUid}

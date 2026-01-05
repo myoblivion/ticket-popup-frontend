@@ -111,7 +111,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
     return member ? (member.displayName || member.email) : 'Unknown User';
   };
 
-  // --- 1. REAL-TIME DATA FETCHING (Fixed) ---
+  // --- 1. REAL-TIME DATA FETCHING ---
   useEffect(() => {
     if (!teamId || !handoverId) return;
     setLoading(true);
@@ -124,21 +124,21 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
             const d = docSnap.data();
             setProjectData({ id: docSnap.id, ...d });
             
-            // Check Creator Status immediately
+            // Check Creator Status
             if (currentUserUid && d.postedBy === currentUserUid) setIsCreator(true);
             else if (currentUserUid && d.createdBy === currentUserUid) setIsCreator(true);
             else setIsCreator(false);
 
             // Find specific task
-            const foundTask = d.projectTasks?.find(t => t.id === taskId);
+            // Note: If taskId passed here is a number (string), we check taskNumber too just in case props are weird, 
+            // but normally parent passes the unique ID here.
+            const foundTask = d.projectTasks?.find(t => t.id === taskId || String(t.taskNumber) === String(taskId));
             setTaskData(foundTask || null);
         }
         setLoading(false);
     });
 
-    // Get Team Data (for Telegram ID - one time fetch is usually fine, or listen if needed)
     const teamRef = doc(db, 'teams', teamId);
-    // We can keep this one-time or make it realtime. One-time is usually safe for config.
     import('firebase/firestore').then(({getDoc}) => {
         getDoc(teamRef).then(snap => {
             if(snap.exists()) setTelegramChatId(snap.data().telegramChatId);
@@ -148,7 +148,6 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
     return () => unsubProject();
   }, [teamId, handoverId, taskId, currentUserUid]);
 
-  // --- COMMENTS LISTENER ---
   useEffect(() => {
       if(!teamId || !handoverId) return;
       const q = query(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), orderBy('createdAt', 'asc'));
@@ -159,7 +158,6 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
       return () => unsub();
   }, [teamId, handoverId]);
 
-  // --- ACTIVE SESSION LISTENER ---
   useEffect(() => {
       if(!currentUserUid || !teamId || !handoverId) return;
       const q = query(
@@ -175,19 +173,23 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
       return () => unsub();
   }, [teamId, handoverId, currentUserUid]);
 
-  // --- UPDATE HELPER ---
+  // --- HELPER TO GENERATE URL ---
+  const generateTaskUrl = () => {
+      // Use Task Number if available, else ID. 
+      const identifier = taskData?.taskNumber || taskId; 
+      // UPDATED: No handoverId in URL
+      return `${window.location.origin}/team/${teamId}?taskId=${identifier}`;
+  };
+
   const handleUpdateTaskStatus = async (newStatus, additionalData = {}) => {
       try {
-          // We read fresh, update, and write. The onSnapshot above will update the UI.
           const docRef = doc(db, 'teams', teamId, 'handovers', handoverId);
-          // Note: using transaction is safer, but standard get/update is usually fine here
-          // For simplicity/consistency with existing code structure:
           const latestSnap = await import('firebase/firestore').then(({getDoc}) => getDoc(docRef));
           
           if (!latestSnap.exists()) return;
           
           let tasks = latestSnap.data().projectTasks || [];
-          const taskIndex = tasks.findIndex(t => t.id === taskId);
+          const taskIndex = tasks.findIndex(t => t.id === taskId || String(t.taskNumber) === String(taskId));
           if (taskIndex === -1) return;
           
           tasks[taskIndex].status = newStatus;
@@ -196,14 +198,13 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
           }
           
           await updateDoc(docRef, { projectTasks: tasks });
-          // No need to manually setTaskData, the listener handles it.
       } catch (err) { console.error("Error updating status:", err); }
   };
 
   const handleToggleWork = async (actionType) => {
       if(!currentUserUid || !taskData) return;
       const userName = auth.currentUser?.displayName || 'Unknown';
-      const projectUrl = `${window.location.origin}/team/${teamId}?handoverId=${handoverId}&taskId=${taskId}`;
+      const projectUrl = generateTaskUrl();
       
       try {
           if (actionType === 'start' || actionType === 'resume') handleUpdateTaskStatus('In Progress');
@@ -219,8 +220,10 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
           }
           
           if (actionType === 'start' || actionType === 'resume') {
+              // Note: Use task unique ID for logs if possible
+              const logTaskId = taskData.id || taskId;
               await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
-                  type: 'task', action: 'Working', userName, userId: currentUserUid, handoverId, taskId, taskTitle: taskData.title, startTime: serverTimestamp(), status: 'active', createdAt: serverTimestamp()
+                  type: 'task', action: 'Working', userName, userId: currentUserUid, handoverId, taskId: logTaskId, taskTitle: taskData.title, startTime: serverTimestamp(), status: 'active', createdAt: serverTimestamp()
               });
               sendTelegramNotification(telegramChatId, actionType, { userName, projectName: projectData.title, taskName: taskData.title, projectUrl }, teamId);
           }
@@ -229,7 +232,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
 
   const handleConfirmSubmit = async () => {
       const userName = auth.currentUser?.displayName || 'Unknown';
-      const projectUrl = `${window.location.origin}/team/${teamId}?handoverId=${handoverId}&taskId=${taskId}`;
+      const projectUrl = generateTaskUrl();
       
       const details = { userName, projectName: projectData.title, taskName: taskData.title, notes: submissionNote, fileCount: submissionImages.length + submissionFiles.length, projectUrl };
       
@@ -244,7 +247,6 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
           sendTelegramNotification(telegramChatId, 'submit', { ...details, duration: 'N/A' }, teamId);
       }
       
-      // Updates status to QA -> Listener updates UI -> Buttons disappear
       await handleUpdateTaskStatus('QA', { 
           submission: { 
               note: submissionNote, 
@@ -260,7 +262,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
   const handleConfirmRevision = async () => {
     if (!revisionReason.trim()) return alert("Please provide a reason.");
     const userName = auth.currentUser?.displayName || 'Unknown';
-    const projectUrl = `${window.location.origin}/team/${teamId}?handoverId=${handoverId}&taskId=${taskId}`;
+    const projectUrl = generateTaskUrl();
     
     await handleUpdateTaskStatus('Revision', { revisionFeedback: { reason: revisionReason, requestedBy: currentUserUid, requestedAt: new Date().toISOString() }}); 
     sendTelegramNotification(telegramChatId, 'revision', { userName, projectName: projectData.title, taskName: taskData.title, notes: revisionReason, projectUrl }, teamId);
@@ -301,8 +303,8 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
   if (!teamId || !handoverId || !taskId) return null;
 
   const isAssigned = taskData && ( (Array.isArray(taskData.assignedTo) && taskData.assignedTo.includes(currentUserUid)) || isCreator );
-  const isActive = activeSession && activeSession.taskId === taskId && activeSession.status === 'active';
-  const isPaused = activeSession && activeSession.taskId === taskId && activeSession.status === 'paused';
+  const isActive = activeSession && activeSession.taskId === (taskData?.id || taskId) && activeSession.status === 'active';
+  const isPaused = activeSession && activeSession.taskId === (taskData?.id || taskId) && activeSession.status === 'paused';
   const isRevision = taskData?.status === 'Revision';
   const isQA = taskData?.status === 'QA';
   const isCompleted = taskData?.status === 'Completed';
