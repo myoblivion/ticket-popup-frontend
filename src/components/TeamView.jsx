@@ -51,27 +51,16 @@ const linkify = (text) => {
 };
 
 // --- Members List Modal (UPDATED) ---
-const MembersListModal = ({ isOpen, onClose, members, onInvite, teamId, isWorkAdmin }) => {
+const MembersListModal = ({ isOpen, onClose, members, onInvite, teamId, isWorkAdmin, teamCreatorId }) => {
   if (!isOpen) return null;
 
   const handleRoleChange = async (uid, newRole) => {
       try {
           const teamRef = doc(db, 'teams', teamId);
-          const teamSnap = await getDoc(teamRef);
-          if (!teamSnap.exists()) return;
-
-          const currentMembers = teamSnap.data().members || [];
-          // Update the role for the matching UID
-          const updatedMembers = currentMembers.map(m => {
-              const mUid = typeof m === 'object' ? m.uid : m;
-              if (mUid === uid) {
-                  return { uid: mUid, role: newRole };
-              }
-              // Ensure we don't break existing string-only entries if they exist
-              return typeof m === 'string' ? { uid: m, role: 'Member' } : m;
+          // FIXED LOGIC: Update the 'roles' map field, do NOT touch the 'members' array structure
+          await updateDoc(teamRef, {
+              [`roles.${uid}`]: newRole
           });
-
-          await updateDoc(teamRef, { members: updatedMembers });
       } catch (error) {
           console.error("Failed to update role:", error);
           alert("Failed to update role.");
@@ -90,7 +79,11 @@ const MembersListModal = ({ isOpen, onClose, members, onInvite, teamId, isWorkAd
               <p className="text-center text-gray-400 py-4 text-sm">No members yet.</p>
           ) : (
               <div className="space-y-1">
-                  {members.map(m => (
+                  {members.map(m => {
+                    // Check if this member is the Creator
+                    const isCreator = m.uid === teamCreatorId;
+
+                    return (
                     <div key={m.uid} className="flex items-center justify-between gap-3 p-2 hover:bg-blue-50 rounded-lg border border-transparent hover:border-blue-100 transition-colors">
                       <div className="flex items-center gap-3 flex-1 overflow-hidden">
                           <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold flex-shrink-0">
@@ -102,13 +95,17 @@ const MembersListModal = ({ isOpen, onClose, members, onInvite, teamId, isWorkAd
                           </div>
                       </div>
                       
-                      {/* Role Selector */}
+                      {/* Role Selector or Creator Badge */}
                       <div className="flex-shrink-0">
-                          {isWorkAdmin ? (
+                          {isCreator ? (
+                             <span className="text-xs font-bold px-2.5 py-1 bg-yellow-100 text-yellow-700 rounded-full border border-yellow-200 shadow-sm">
+                                Creator
+                             </span>
+                          ) : isWorkAdmin ? (
                               <select 
                                   value={m.role || 'Member'} 
                                   onChange={(e) => handleRoleChange(m.uid, e.target.value)}
-                                  className="text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                                  className="text-xs border border-gray-300 rounded px-2 py-1 bg-white focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer"
                               >
                                   <option value="Member">Member</option>
                                   <option value="Admin">Admin</option>
@@ -120,7 +117,7 @@ const MembersListModal = ({ isOpen, onClose, members, onInvite, teamId, isWorkAd
                           )}
                       </div>
                     </div>
-                  ))}
+                  )})}
               </div>
           )}
         </div>
@@ -193,6 +190,7 @@ const TeamView = () => {
   const [error, setError] = useState(null);
   const [isAuthorized, setIsAuthorized] = useState(false);
   const [announcementRefreshKey, setAnnouncementRefreshKey] = useState(0);
+  const [isMasterAdmin, setIsMasterAdmin] = useState(false);
 
   // --- Project State ---
   const [projects, setProjects] = useState([]); 
@@ -218,12 +216,9 @@ const TeamView = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
-  
-  // NEW: State to track which parent project we are adding a sub-project to
   const [targetParentId, setTargetParentId] = useState(null);
 
-  const [isMasterAdmin, setIsMasterAdmin] = useState(false);
-
+  // 1. Auth Listener
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
@@ -232,44 +227,97 @@ const TeamView = () => {
     return unsub;
   }, [navigate, teamId]);
 
-  const fetchTeamAndMembers = useCallback(async () => {
+  // 2. Fetch User Role (Master Admin Check)
+  useEffect(() => {
+    if(currentUser) {
+        getDoc(doc(db, "users", currentUser.uid)).then(snap => {
+            if(snap.exists() && snap.data().role === 'Master Admin') {
+                setIsMasterAdmin(true);
+            }
+        });
+    }
+  }, [currentUser]);
+
+  // 3. Real-time Team Data Listener
+  useEffect(() => {
     if (!teamId || !currentUser) return;
-    setIsLoading(true); setError(null);
-    try {
-      const teamDocRef = doc(db, "teams", teamId);
-      const userDocRef = doc(db, "users", currentUser.uid);
-      const [teamDocSnap, userDocSnap] = await Promise.all([ getDoc(teamDocRef), getDoc(userDocRef) ]);
+    setIsLoading(true);
+    
+    const teamDocRef = doc(db, "teams", teamId);
 
-      if (!teamDocSnap.exists()) { setError("Team not found"); setIsLoading(false); return; }
-      
-      const teamD = teamDocSnap.data();
-      const members = teamD.members || [];
-      const isMem = members.some(m => (typeof m === 'object' ? m.uid : m) === currentUser.uid);
-      
-      if (!isMem && userDocSnap.data()?.role !== 'Master Admin') {
-          setError("Access Denied"); setIsLoading(false); return;
-      }
+    const unsub = onSnapshot(teamDocRef, async (docSnap) => {
+        if (!docSnap.exists()) {
+            setError("Team not found");
+            setIsLoading(false);
+            return;
+        }
+        
+        const data = docSnap.data();
+        let membersList = data.members || [];
+        
+        // --- AUTO-FIX LOGIC FOR BROKEN DB STRUCTURE ---
+        // If members contains objects (caused by the bug), convert it back to strings immediately
+        const hasBrokenStructure = membersList.some(m => typeof m === 'object');
+        
+        if (hasBrokenStructure) {
+            console.warn("Detected broken members structure. Auto-fixing...");
+            const fixedMembers = [];
+            const restoredRoles = data.roles || {};
+            
+            membersList.forEach(m => {
+                if (typeof m === 'object' && m.uid) {
+                    fixedMembers.push(m.uid);
+                    if (m.role) restoredRoles[m.uid] = m.role;
+                } else if (typeof m === 'string') {
+                    fixedMembers.push(m);
+                }
+            });
+            
+            // Perform the fix in Firestore
+            await updateDoc(teamDocRef, {
+                members: fixedMembers,
+                roles: restoredRoles
+            });
+            // The snapshot will re-fire with correct data, so we can just return here
+            return;
+        }
+        // ----------------------------------------------
 
-      setIsAuthorized(true);
-      setTeamData({ id: teamDocSnap.id, ...teamD });
-      if(teamD.endorsementCategories) setCategoriesList(teamD.endorsementCategories);
+        setTeamData({ id: docSnap.id, ...data });
+        if(data.endorsementCategories) setCategoriesList(data.endorsementCategories);
+        
+        // Basic Authorization Check
+        const isMem = membersList.includes(currentUser.uid);
+        
+        setIsAuthorized(true);
 
-      const uids = [...new Set(members.map(m => typeof m === 'object' ? m.uid : m))];
-      if (uids.length > 0) {
-        const snaps = await Promise.all(uids.map(uid => getDoc(doc(db, "users", uid))));
-        setMembersDetails(snaps.map((s, i) => s.exists() ? { uid: uids[i], ...s.data() } : { uid: uids[i], email: 'Unknown' }));
-      }
-    } catch (e) { setError("Failed to load"); } finally { setIsLoading(false); }
+        // Fetch Member Details
+        // We only fetch if members are simple strings (which the auto-fix ensures)
+        if (membersList.length > 0) {
+            try {
+                const userSnaps = await Promise.all(membersList.map(uid => getDoc(doc(db, "users", uid))));
+                setMembersDetails(userSnaps.map((s, i) => s.exists() ? { uid: membersList[i], ...s.data() } : { uid: membersList[i], email: 'Unknown' }));
+            } catch(e) { console.error(e); }
+        } else {
+            setMembersDetails([]);
+        }
+        
+        setIsLoading(false);
+    }, (err) => {
+        console.error("Snapshot error:", err);
+        setError("Failed to load team");
+        setIsLoading(false);
+    });
+    
+    return () => unsub();
   }, [teamId, currentUser]);
-
-  useEffect(() => { fetchTeamAndMembers(); }, [fetchTeamAndMembers, announcementRefreshKey]);
 
   // Fetch Projects for Sidebar
   useEffect(() => {
       if (!teamId || !isAuthorized) return;
       const q = query(collection(db, `teams/${teamId}/handovers`), orderBy('createdAt', 'desc'));
       const unsub = onSnapshot(q, (snapshot) => {
-         setProjects(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+          setProjects(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       });
       return () => unsub();
   }, [teamId, isAuthorized]);
@@ -294,20 +342,23 @@ const TeamView = () => {
       }
   };
 
+  // Determine Permissions
+  // Use the roles map for Admin check
+  const myRole = teamData?.roles?.[currentUser?.uid];
   const isTeamCreator = teamData?.createdBy === currentUser?.uid;
-  const isWorkAdmin = isTeamCreator || isMasterAdmin;
+  const isWorkAdmin = isTeamCreator || isMasterAdmin || myRole === 'Admin';
 
-  // --- Helper to get parent projects (those without parentId) ---
+  // --- Helper to get parent projects ---
   const parentProjects = projects.filter(p => !p.parentId);
-  // --- Helper to get children for a specific parent ---
   const getSubProjects = (parentId) => projects.filter(p => p.parentId === parentId);
 
-  // --- Combine member details with roles ---
+  // --- Combine member details with roles from the 'roles' map ---
   const membersWithRoles = membersDetails.map(member => {
-      const rawMember = teamData?.members?.find(m => (typeof m === 'object' ? m.uid : m) === member.uid);
+      // Use the 'roles' map from teamData
+      const role = teamData?.roles?.[member.uid] || 'Member';
       return {
           ...member,
-          role: (typeof rawMember === 'object' && rawMember.role) ? rawMember.role : 'Member'
+          role: role
       };
   });
 
@@ -591,9 +642,10 @@ const TeamView = () => {
       <MembersListModal 
           isOpen={isMembersListOpen}
           onClose={() => setIsMembersListOpen(false)}
-          members={membersWithRoles} // Pass members with roles
+          members={membersWithRoles} 
           teamId={teamId}
           isWorkAdmin={isWorkAdmin}
+          teamCreatorId={teamData?.createdBy} // PASSED CREATOR ID
           onInvite={() => setIsInviteModalOpen(true)}
       />
 

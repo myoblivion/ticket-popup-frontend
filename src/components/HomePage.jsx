@@ -1,4 +1,4 @@
-// HomePage.jsx
+// src/components/HomePage.jsx
 import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { onAuthStateChanged } from "firebase/auth";
@@ -10,7 +10,6 @@ import { LanguageContext } from '../contexts/LanguageContext';
 
 // Modals
 import CreateTeamModal from './CreateTeamModal';
-import CreateSubTeamModal from './CreateSubTeamModal'; // Kept in imports in case needed later, but unused in UI now
 import NotificationsModal from './NotificationsModal';
 import ConfirmationModal from './ConfirmationModal'; 
 
@@ -18,6 +17,7 @@ import ConfirmationModal from './ConfirmationModal';
 const TrashIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>;
 const PencilIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>;
 const FolderIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>;
+const WrenchIcon = () => <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>;
 
 const Spinner = () => (
   <div className="flex justify-center items-center py-6">
@@ -198,6 +198,7 @@ const HomePage = () => {
   const [allTeams, setAllTeams] = useState([]); 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isFixing, setIsFixing] = useState(false);
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -244,9 +245,6 @@ const HomePage = () => {
         const unsubscribeTeams = onSnapshot(q, async (snapshot) => {
             const loadedTeams = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             
-            // --- Logic to ensure we get necessary data ---
-            // Even though we hide sub-projects on the homepage UI, we keep the robust fetching logic
-            // in case the user role logic relies on parent/child relationships for permissions.
             const myManagedParents = loadedTeams.filter(team => 
                 !team.parentTeamId && (
                     team.createdBy === currentUser.uid || 
@@ -299,6 +297,55 @@ const HomePage = () => {
     return () => unsubscribeAuth();
   }, [navigate, t]);
 
+  // --- REPAIR FUNCTION ---
+  const handleRepairData = async () => {
+      if(!window.confirm("This will scan all teams and fix any hidden projects caused by the recent role assignment bug. Continue?")) return;
+      setIsFixing(true);
+      try {
+          // Get ALL teams (ignore permissions for the fix scan)
+          const q = query(collection(db, "teams"));
+          const snapshot = await getDocs(q);
+          let fixedCount = 0;
+
+          const updates = snapshot.docs.map(async (docSnap) => {
+              const data = docSnap.data();
+              const members = data.members || [];
+              
+              // Check if corrupted (contains objects)
+              const isCorrupted = members.some(m => typeof m === 'object');
+
+              if (isCorrupted) {
+                  const fixedMembers = [];
+                  const restoredRoles = data.roles || {};
+
+                  members.forEach(m => {
+                      if (typeof m === 'object' && m.uid) {
+                          fixedMembers.push(m.uid); // Extract UID string
+                          if (m.role) restoredRoles[m.uid] = m.role; // Save role to map
+                      } else if (typeof m === 'string') {
+                          fixedMembers.push(m);
+                      }
+                  });
+
+                  // Update DB
+                  await updateDoc(doc(db, "teams", docSnap.id), {
+                      members: fixedMembers,
+                      roles: restoredRoles
+                  });
+                  fixedCount++;
+              }
+          });
+
+          await Promise.all(updates);
+          alert(`Scan complete. Fixed ${fixedCount} hidden teams.`);
+      } catch (err) {
+          console.error("Repair failed", err);
+          alert("Repair failed. Check console.");
+      } finally {
+          setIsFixing(false);
+      }
+  };
+
   // Handlers
   const handleOpenDeleteParentModal = (team) => {
     setParentTeamToDelete(team);
@@ -319,7 +366,7 @@ const HomePage = () => {
         });
     } catch (err) {
         console.error("Error updating project:", err);
-        throw err; // Re-throw to be caught in modal
+        throw err; 
     }
   };
 
@@ -334,14 +381,11 @@ const HomePage = () => {
     }
   };
 
-  // Filter only Main Projects (Parent Teams) for display
   const parentTeams = allTeams.filter(team => !team.parentTeamId);
-
-  const handleRefresh = () => { /* snapshot listener handles updates */ };
+  const handleRefresh = () => { };
 
   return (
     <>
-      {/* UPDATED: Changed max-w-7xl to max-w-full to make it wider */}
       <section className="max-w-full mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <div className="flex flex-col sm:flex-row justify-between items-center mb-10 gap-4">
           <div>
@@ -349,6 +393,16 @@ const HomePage = () => {
             <p className="text-gray-500 mt-1">Manage your main workspaces and teams</p>
           </div>
           <div className="flex items-center gap-3">
+            {/* REPAIR BUTTON */}
+            <button 
+                onClick={handleRepairData} 
+                disabled={isFixing}
+                className="bg-orange-100 hover:bg-orange-200 text-orange-700 text-sm font-bold py-2.5 px-5 rounded-lg shadow-sm hover:shadow-md transition-all flex items-center gap-2"
+                title="Use this if teams disappeared"
+            >
+                {isFixing ? <Spinner /> : <><WrenchIcon /> Fix Hidden Teams</>}
+            </button>
+
             <button onClick={() => setIsCreateModalOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-2.5 px-5 rounded-lg shadow-sm hover:shadow-md transition-all flex items-center gap-2">
               {t('home.createMainProject', 'New Project')}
             </button>
