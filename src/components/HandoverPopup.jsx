@@ -7,9 +7,6 @@ import {
 } from 'firebase/firestore'; 
 import { LanguageContext } from '../contexts/LanguageContext';
 
-// --- CONFIGURATION ---
-const TELEGRAM_BOT_TOKEN = '8204073221:AAEuEMTZoeRAPBx0IjkSc-ZafHjiTMarb6g'; 
-
 // --- ICONS ---
 const PaperClipIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>;
 const LinkIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>;
@@ -17,53 +14,7 @@ const ExclamationIcon = () => <svg className="w-5 h-5 text-red-600" fill="none" 
 const FileIcon = () => <svg className="w-4 h-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>;
 const CloseIcon = () => <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>;
 
-// --- TELEGRAM HELPER ---
-const sendTelegramNotification = async (chatId, type, details, teamId) => {
-    if (!TELEGRAM_BOT_TOKEN || !chatId) return;
-    const { userName, projectName, taskName, duration, projectUrl, notes, fileCount } = details;
-    const now = new Date().toLocaleString();
-    const linkHtml = projectUrl ? `\n\n🔗 <a href="${projectUrl}">Open Task</a>` : '';
-    let message = '';
-    
-    switch (type) {
-        case 'start':
-        case 'resume':
-            const emojiStart = type === 'resume' ? '▶️' : '🚀';
-            message = `<b>${emojiStart} User ${type === 'resume' ? 'Resumed' : 'Started'} Task</b>\n👤 <b>User:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⏰ <b>Time:</b> ${now}${linkHtml}`;
-            break;
-        case 'submit':
-            message = `<b>✋ Task Submitted for QA</b>\n👤 <b>User:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⏱️ <b>Duration:</b> ${duration}\n📄 <b>Notes:</b> ${notes || 'No notes.'}\n📎 <b>Files/Images:</b> ${fileCount || 0}${linkHtml}`;
-            break;
-        case 'completed':
-            message = `<b>✅ Task Approved & Completed</b>\n👤 <b>Approver:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}${linkHtml}`;
-            break;
-        case 'revision':
-            message = `<b>↩️ Revision Requested</b>\n👤 <b>Reviewer:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⚠️ <b>Feedback:</b> ${notes}${linkHtml}`;
-            break;
-        case 'pause':
-            message = `<b>⏸️ User Paused Task</b>\n👤 <b>User:</b> ${userName}\n📂 <b>Project:</b> ${projectName}\n📝 <b>Task:</b> ${taskName}\n⏱️ <b>Duration:</b> ${duration}${linkHtml}`;
-            break;
-        default: break;
-    }
-
-    if (message) {
-        try {
-            const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'HTML', disable_web_page_preview: true })
-            });
-            const data = await response.json();
-            if (!data.ok && data.error_code === 400 && data.parameters?.migrate_to_chat_id) {
-                if (teamId) {
-                    await updateDoc(doc(db, 'teams', teamId), { telegramChatId: data.parameters.migrate_to_chat_id });
-                    await sendTelegramNotification(data.parameters.migrate_to_chat_id, type, details, teamId);
-                }
-            }
-        } catch (error) { console.error("Failed to send Telegram notification", error); }
-    }
-};
-
+// --- HELPER: DURATION FORMATTER ---
 const formatDuration = (ms) => {
     if (ms < 0) ms = 0;
     const seconds = Math.floor((ms / 1000) % 60);
@@ -87,13 +38,14 @@ const LiveDuration = ({ startTime, isPaused }) => {
 const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [], currentUserUid }) => {
   const { t } = useContext(LanguageContext);
   const [projectData, setProjectData] = useState(null);
-  const [taskData, setTaskData] = useState(null); // Derived from projectData
+  const [taskData, setTaskData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [telegramChatId, setTelegramChatId] = useState(null);
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState('');
   const messagesEndRef = useRef(null);
   const [activeSession, setActiveSession] = useState(null);
+  
+  // Modals
   const [submissionModal, setSubmissionModal] = useState(false);
   const [submissionNote, setSubmissionNote] = useState('');
   const [submissionImages, setSubmissionImages] = useState([]); 
@@ -105,13 +57,22 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
   // Derived state for creator
   const [isCreator, setIsCreator] = useState(false);
 
+  // --- 1. RESOLVE NAME CORRECTLY (Fixes "Unknown") ---
+  const resolveCurrentName = () => {
+    // 1. Try Firebase Auth Profile
+    if (auth.currentUser?.displayName) return auth.currentUser.displayName;
+    // 2. Try Members List Lookup
+    const member = membersDetails.find(m => m.uid === currentUserUid);
+    return member ? (member.displayName || member.email) : 'Unknown User';
+  };
+
   const resolveName = (uid) => {
     if (!uid) return 'Unknown';
     const member = membersDetails.find(m => m.uid === uid);
     return member ? (member.displayName || member.email) : 'Unknown User';
   };
 
-  // --- 1. REAL-TIME DATA FETCHING ---
+  // --- DATA FETCHING ---
   useEffect(() => {
     if (!teamId || !handoverId) return;
     setLoading(true);
@@ -124,30 +85,20 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
             const d = docSnap.data();
             setProjectData({ id: docSnap.id, ...d });
             
-            // Check Creator Status
             if (currentUserUid && d.postedBy === currentUserUid) setIsCreator(true);
             else if (currentUserUid && d.createdBy === currentUserUid) setIsCreator(true);
             else setIsCreator(false);
 
-            // Find specific task
-            // Note: If taskId passed here is a number (string), we check taskNumber too just in case props are weird, 
-            // but normally parent passes the unique ID here.
             const foundTask = d.projectTasks?.find(t => t.id === taskId || String(t.taskNumber) === String(taskId));
             setTaskData(foundTask || null);
         }
         setLoading(false);
     });
 
-    const teamRef = doc(db, 'teams', teamId);
-    import('firebase/firestore').then(({getDoc}) => {
-        getDoc(teamRef).then(snap => {
-            if(snap.exists()) setTelegramChatId(snap.data().telegramChatId);
-        });
-    });
-
     return () => unsubProject();
   }, [teamId, handoverId, taskId, currentUserUid]);
 
+  // Listen to Comments Subcollection
   useEffect(() => {
       if(!teamId || !handoverId) return;
       const q = query(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), orderBy('createdAt', 'asc'));
@@ -158,6 +109,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
       return () => unsub();
   }, [teamId, handoverId]);
 
+  // Listen to Work Logs
   useEffect(() => {
       if(!currentUserUid || !teamId || !handoverId) return;
       const q = query(
@@ -172,14 +124,6 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
       });
       return () => unsub();
   }, [teamId, handoverId, currentUserUid]);
-
-  // --- HELPER TO GENERATE URL ---
-  const generateTaskUrl = () => {
-      // Use Task Number if available, else ID. 
-      const identifier = taskData?.taskNumber || taskId; 
-      // UPDATED: No handoverId in URL
-      return `${window.location.origin}/team/${teamId}?taskId=${identifier}`;
-  };
 
   const handleUpdateTaskStatus = async (newStatus, additionalData = {}) => {
       try {
@@ -203,8 +147,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
 
   const handleToggleWork = async (actionType) => {
       if(!currentUserUid || !taskData) return;
-      const userName = auth.currentUser?.displayName || 'Unknown';
-      const projectUrl = generateTaskUrl();
+      const userName = resolveCurrentName(); // ✅ FIX: Use resolved name
       
       try {
           if (actionType === 'start' || actionType === 'resume') handleUpdateTaskStatus('In Progress');
@@ -214,37 +157,27 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
               const endTime = new Date();
               const startTime = activeSession.startTime?.toDate ? activeSession.startTime.toDate() : new Date(activeSession.startTime);
               const durationStr = formatDuration(endTime - startTime);
-              await updateDoc(logRef, { endTime: serverTimestamp(), status: 'completed', action: actionType === 'pause' ? 'Paused' : 'Stopped' });
-              
-              if (actionType === 'pause') sendTelegramNotification(telegramChatId, 'pause', { userName, projectName: projectData.title, taskName: taskData.title, duration: durationStr, projectUrl }, teamId);
+              await updateDoc(logRef, { endTime: serverTimestamp(), status: 'completed', action: actionType === 'pause' ? 'Paused' : 'Stopped', durationStr });
           }
           
           if (actionType === 'start' || actionType === 'resume') {
-              // Note: Use task unique ID for logs if possible
               const logTaskId = taskData.id || taskId;
               await addDoc(collection(db, 'teams', teamId, 'workLogs'), {
                   type: 'task', action: 'Working', userName, userId: currentUserUid, handoverId, taskId: logTaskId, taskTitle: taskData.title, startTime: serverTimestamp(), status: 'active', createdAt: serverTimestamp()
               });
-              sendTelegramNotification(telegramChatId, actionType, { userName, projectName: projectData.title, taskName: taskData.title, projectUrl }, teamId);
           }
       } catch (err) { console.error("Error toggling work:", err); }
   };
 
   const handleConfirmSubmit = async () => {
-      const userName = auth.currentUser?.displayName || 'Unknown';
-      const projectUrl = generateTaskUrl();
-      
-      const details = { userName, projectName: projectData.title, taskName: taskData.title, notes: submissionNote, fileCount: submissionImages.length + submissionFiles.length, projectUrl };
+      const userName = resolveCurrentName(); // ✅ FIX
       
       if (activeSession) {
           const logRef = doc(db, 'teams', teamId, 'workLogs', activeSession.id);
           const endTime = new Date();
           const startTime = activeSession.startTime?.toDate ? activeSession.startTime.toDate() : new Date(activeSession.startTime);
           const durationStr = formatDuration(endTime - startTime);
-          await updateDoc(logRef, { endTime: serverTimestamp(), status: 'completed', action: 'Submitted' });
-          sendTelegramNotification(telegramChatId, 'submit', { ...details, duration: durationStr }, teamId);
-      } else {
-          sendTelegramNotification(telegramChatId, 'submit', { ...details, duration: 'N/A' }, teamId);
+          await updateDoc(logRef, { endTime: serverTimestamp(), status: 'completed', action: 'Submitted', durationStr });
       }
       
       await handleUpdateTaskStatus('QA', { 
@@ -261,12 +194,39 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
 
   const handleConfirmRevision = async () => {
     if (!revisionReason.trim()) return alert("Please provide a reason.");
-    const userName = auth.currentUser?.displayName || 'Unknown';
-    const projectUrl = generateTaskUrl();
-    
+    // const userName = resolveCurrentName(); // Not needed for DB write, but good for logs
     await handleUpdateTaskStatus('Revision', { revisionFeedback: { reason: revisionReason, requestedBy: currentUserUid, requestedAt: new Date().toISOString() }}); 
-    sendTelegramNotification(telegramChatId, 'revision', { userName, projectName: projectData.title, taskName: taskData.title, notes: revisionReason, projectUrl }, teamId);
     setRevisionModal(false); setRevisionReason('');
+  };
+
+  // --- COMMENT HANDLER ---
+  const handleSendComment = async (e) => {
+    e.preventDefault();
+    if(!newComment.trim()) return;
+    
+    const userName = resolveCurrentName(); // ✅ FIX
+
+    // 1. Add to Subcollection (Keeps the UI chat working)
+    await addDoc(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), { 
+        text: newComment, 
+        userId: currentUserUid, 
+        userName: userName, 
+        createdAt: serverTimestamp() 
+    });
+
+    // 2. Update Task (Triggers the Bot Notification)
+    // We append this comment to the task's 'comments' array so the Bot detects a change
+    const currentComments = taskData.comments || [];
+    const updatedComments = [...currentComments, {
+        text: newComment,
+        userId: currentUserUid,
+        userName: userName,
+        createdAt: new Date().toISOString()
+    }];
+
+    await handleUpdateTaskStatus(taskData.status, { comments: updatedComments });
+
+    setNewComment('');
   };
 
   const processPaste = (e, setImagesFunc) => {
@@ -318,8 +278,8 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
         {/* HEADER */}
         <div className="flex justify-between items-center px-6 py-4 border-b border-gray-200 bg-white">
           <div>
-             <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{projectData?.title || 'Project'}</h3>
-             <h2 className="text-xl font-extrabold text-slate-800">{loading ? 'Loading...' : (taskData?.title || 'Task Details')}</h2>
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">{projectData?.title || 'Project'}</h3>
+              <h2 className="text-xl font-extrabold text-slate-800">{loading ? 'Loading...' : (taskData?.title || 'Task Details')}</h2>
           </div>
           <button onClick={onClose} className="bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-600 p-2 rounded-full transition-all"><CloseIcon /></button>
         </div>
@@ -327,8 +287,8 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
         <div className="flex-1 overflow-hidden flex flex-col lg:flex-row bg-slate-50">
           {/* LEFT: MAIN CONTENT */}
           <div className="flex-1 p-6 overflow-y-auto custom-scrollbar flex flex-col">
-             {!loading && taskData ? (
-                 <div className="space-y-6">
+              {!loading && taskData ? (
+                  <div className="space-y-6">
                       {/* STATUS & ACTIONS CARD */}
                       <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                             <div className="flex items-center gap-2">
@@ -441,7 +401,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
                    <div ref={messagesEndRef} />
                 </div>
 
-                <form onSubmit={(e) => { e.preventDefault(); if(!newComment.trim()) return; addDoc(collection(db, 'teams', teamId, 'handovers', handoverId, 'comments'), { text: newComment, userId: auth.currentUser.uid, userName: auth.currentUser.displayName || 'Unknown', createdAt: serverTimestamp() }); setNewComment(''); }} className="p-3 border-t border-slate-200 bg-white flex gap-2">
+                <form onSubmit={handleSendComment} className="p-3 border-t border-slate-200 bg-white flex gap-2">
                     <input className="flex-1 bg-slate-50 border border-slate-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type a message..." value={newComment} onChange={e => setNewComment(e.target.value)} />
                     <button type="submit" disabled={!newComment.trim()} className="bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-bold hover:bg-blue-700 disabled:opacity-50 transition">Send</button>
                 </form>
@@ -449,7 +409,7 @@ const HandoverPopup = ({ teamId, handoverId, taskId, onClose, membersDetails = [
         </div>
       </div>
 
-      {/* --- IMAGE PREVIEW MODAL (POPUP) --- */}
+      {/* --- IMAGE PREVIEW MODAL --- */}
       {previewImage && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/90 backdrop-blur-md p-4" onClick={() => setPreviewImage(null)}>
             <div className="relative max-w-[90vw] max-h-[90vh]">
