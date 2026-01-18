@@ -420,24 +420,36 @@ const TeamView = () => {
                         {/* Collapsible Content */}
                         {myTasksExpanded && (
                             <div className="ml-4 mt-1 pl-3 border-l-2 border-gray-100 space-y-1">
+                                {/* 1. All Tasks (View All) */}
                                 <button 
                                     onClick={() => { setMyTaskStatusFilter('All'); setSelectedProjectId('my_tasks'); }} 
                                     className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'All' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
                                 >
-                                    All status
+                                    All tasks
                                 </button>
+
+                                {/* 2. All Status (Category Label) */}
+                                <div className="px-3 pt-3 pb-1 text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                    All status
+                                </div>
+
+                                {/* 3. On-going */}
                                 <button 
                                     onClick={() => { setMyTaskStatusFilter('In Progress'); setSelectedProjectId('my_tasks'); }} 
                                     className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'In Progress' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
                                 >
                                     On-going
                                 </button>
+
+                                {/* 4. QA */}
                                 <button 
                                     onClick={() => { setMyTaskStatusFilter('QA'); setSelectedProjectId('my_tasks'); }} 
                                     className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'QA' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
                                 >
                                     QA
                                 </button>
+
+                                {/* 5. Completed */}
                                 <button 
                                     onClick={() => { setMyTaskStatusFilter('Completed'); setSelectedProjectId('my_tasks'); }} 
                                     className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'Completed' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
@@ -580,16 +592,16 @@ const TeamView = () => {
                     <div className="bg-white border-b border-gray-200 h-16 flex items-center justify-between px-8 shadow-sm z-10">
                         <div>
                              <h2 className="text-xl font-bold text-gray-800">
-                                 {selectedProjectId === null ? 'All Tasks Overview' : 
-                                  selectedProjectId === 'my_tasks' ? 'My Assigned Tasks' :
-                                  projects.find(p => p.id === selectedProjectId)?.title || 'Project Tasks'}
+                                  {selectedProjectId === null ? 'All Tasks Overview' : 
+                                   selectedProjectId === 'my_tasks' ? 'My Assigned Tasks' :
+                                   projects.find(p => p.id === selectedProjectId)?.title || 'Project Tasks'}
                              </h2>
                              <p className="text-xs text-gray-500">
-                                 {selectedProjectId === null ? `Viewing tasks from all ${projects.length} projects` : 
-                                  selectedProjectId === 'my_tasks' ? `Tasks assigned to you (${myTaskStatusFilter === 'All' ? 'All' : myTaskStatusFilter})` :
-                                  projects.find(p => p.id === selectedProjectId)?.parentId ? 
-                                    `Sub-project of ${projects.find(parent => parent.id === projects.find(p => p.id === selectedProjectId).parentId)?.title}` 
-                                    : 'Viewing project specific tasks'}
+                                  {selectedProjectId === null ? `Viewing tasks from all ${projects.length} projects` : 
+                                   selectedProjectId === 'my_tasks' ? `Tasks assigned to you (${myTaskStatusFilter === 'All' ? 'All' : myTaskStatusFilter})` :
+                                   projects.find(p => p.id === selectedProjectId)?.parentId ? 
+                                     `Sub-project of ${projects.find(parent => parent.id === projects.find(p => p.id === selectedProjectId).parentId)?.title}` 
+                                     : 'Viewing project specific tasks'}
                              </p>
                         </div>
                         
