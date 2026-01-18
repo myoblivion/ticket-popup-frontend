@@ -1,5 +1,5 @@
 // src/components/TeamView.jsx
-import React, { useState, useEffect, useCallback, useContext } from 'react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   doc, getDoc, collection, query, orderBy, onSnapshot, deleteDoc, updateDoc
@@ -29,6 +29,10 @@ const QuestionMarkCircleIcon = () => <svg className="w-4 h-4" fill="none" viewBo
 const XIcon = () => <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>;
 const BellIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>;
 const BriefcaseIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>;
+const PhotographIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>;
+const DocumentTextIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>;
+const DownloadIcon = () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>;
+const ExternalLinkIcon = () => <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>;
 
 // --- Helper Components ---
 const Spinner = ({ large = false }) => (
@@ -48,6 +52,127 @@ const linkify = (text) => {
   const urlRegex = /(https?:\/\/[^\s]+)/g;
   const parts = text.split(urlRegex);
   return parts.map((part, i) => part.match(urlRegex) ? <a key={i} href={part} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">{part}</a> : part);
+};
+
+// --- FILES GALLERY MODAL ---
+const FilesGalleryModal = ({ isOpen, onClose, projects }) => {
+    const [filter, setFilter] = useState('All'); // All, Images, Documents
+
+    // 1. Extract all files from projects
+    const allFiles = useMemo(() => {
+        if (!projects) return [];
+        let gathered = [];
+
+        projects.forEach(project => {
+            const tasks = project.projectTasks || [];
+            tasks.forEach(task => {
+                // Task Attachments
+                if (task.images?.length) task.images.forEach(url => gathered.push({ type: 'image', url, name: 'Task Image', source: task.title, date: task.createdAt }));
+                if (task.files?.length) task.files.forEach(f => gathered.push({ type: 'file', url: f.data, name: f.name, source: task.title, date: task.createdAt }));
+
+                // Submissions
+                if (task.submission) {
+                    if (task.submission.images?.length) task.submission.images.forEach(url => gathered.push({ type: 'image', url, name: 'Submission Image', source: `Submission: ${task.title}`, date: task.submission.submittedAt }));
+                    if (task.submission.files?.length) task.submission.files.forEach(f => gathered.push({ type: 'file', url: f.data, name: f.name, source: `Submission: ${task.title}`, date: task.submission.submittedAt }));
+                }
+
+                // Revisions
+                if (task.revisionFeedback) {
+                    if (task.revisionFeedback.images?.length) task.revisionFeedback.images.forEach(url => gathered.push({ type: 'image', url, name: 'Revision Image', source: `Revision: ${task.title}`, date: task.revisionFeedback.requestedAt }));
+                    if (task.revisionFeedback.files?.length) task.revisionFeedback.files.forEach(f => gathered.push({ type: 'file', url: f.data, name: f.name, source: `Revision: ${task.title}`, date: task.revisionFeedback.requestedAt }));
+                }
+            });
+        });
+        
+        // Sort by date new to old (mock date if missing)
+        return gathered.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+    }, [projects]);
+
+    const filteredFiles = allFiles.filter(f => {
+        if (filter === 'All') return true;
+        if (filter === 'Images') return f.type === 'image';
+        if (filter === 'Documents') return f.type === 'file';
+        return true;
+    });
+
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl h-[85vh] flex flex-col overflow-hidden">
+                {/* Header */}
+                <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 bg-gray-50">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-blue-100 p-2 rounded-lg text-blue-600"><PhotographIcon /></div>
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-800">Project Files</h3>
+                            <p className="text-xs text-gray-500">All attachments from tasks, submissions, and revisions.</p>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full text-gray-500 transition"><XIcon /></button>
+                </div>
+
+                {/* Filters */}
+                <div className="px-6 py-3 border-b border-gray-100 flex gap-2">
+                    {['All', 'Images', 'Documents'].map(f => (
+                        <button 
+                            key={f}
+                            onClick={() => setFilter(f)}
+                            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${filter === f ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                        >
+                            {f}
+                        </button>
+                    ))}
+                </div>
+
+                {/* Gallery Grid */}
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-50 custom-scrollbar">
+                    {filteredFiles.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-gray-400">
+                            <FolderOpenIcon />
+                            <p className="mt-2 text-sm">No files found.</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            {filteredFiles.map((file, idx) => (
+                                <div key={idx} className="group bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-lg transition-all flex flex-col">
+                                    {/* Thumbnail */}
+                                    <div className="aspect-square bg-gray-100 relative overflow-hidden">
+                                        {file.type === 'image' ? (
+                                            <img src={file.url} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" loading="lazy" />
+                                        ) : (
+                                            <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
+                                                <DocumentTextIcon />
+                                                <span className="text-[10px] uppercase font-bold mt-2">Document</span>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Overlay Actions */}
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 backdrop-blur-[1px]">
+                                            <a href={file.url} target="_blank" rel="noreferrer" className="p-2 bg-white rounded-full text-gray-700 hover:text-blue-600 shadow-sm" title="View"><ExternalLinkIcon /></a>
+                                            <a href={file.url} download className="p-2 bg-white rounded-full text-gray-700 hover:text-blue-600 shadow-sm" title="Download"><DownloadIcon /></a>
+                                        </div>
+                                    </div>
+
+                                    {/* Meta Info */}
+                                    <div className="p-3">
+                                        <p className="text-xs font-bold text-gray-700 truncate" title={file.name}>{file.name}</p>
+                                        <div className="flex items-center gap-1 mt-1 text-[10px] text-gray-400">
+                                            <span className="truncate max-w-[100px]">{file.source}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                
+                <div className="p-3 bg-white border-t border-gray-100 text-center text-xs text-gray-400">
+                    Showing {filteredFiles.length} files
+                </div>
+            </div>
+        </div>
+    );
 };
 
 // --- Members List Modal (UPDATED) ---
@@ -215,6 +340,7 @@ const TeamView = () => {
   const [isViewAnnounceModalOpen, setIsViewAnnounceModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isAddProjectModalOpen, setIsAddProjectModalOpen] = useState(false);
+  const [isFilesGalleryOpen, setIsFilesGalleryOpen] = useState(false); // --- NEW STATE ---
   const [editTarget, setEditTarget] = useState(null);
   const [targetParentId, setTargetParentId] = useState(null);
 
@@ -379,10 +505,10 @@ const TeamView = () => {
                     
                     {/* UTILITIES */}
                     <div className="px-4 mb-4">
-                         <div className="flex items-center gap-2 mb-2 px-2">
+                          <div className="flex items-center gap-2 mb-2 px-2">
                              <AlertIcon />
                              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Workspace</p>
-                         </div>
+                          </div>
                         <button onClick={() => setIsFAQModalOpen(true)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
                             <QuestionMarkCircleIcon />
                             <span>Info Board</span>
@@ -396,6 +522,12 @@ const TeamView = () => {
                         <button onClick={() => setIsMembersListOpen(true)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
                             <UserGroupIcon />
                             <span>Members ({membersDetails.length})</span>
+                        </button>
+
+                        {/* --- NEW PROJECT FILES BUTTON --- */}
+                        <button onClick={() => setIsFilesGalleryOpen(true)} className="w-full flex items-center gap-3 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">
+                            <PhotographIcon />
+                            <span>Project Files</span>
                         </button>
                     </div>
 
@@ -449,7 +581,15 @@ const TeamView = () => {
                                     QA
                                 </button>
 
-                                {/* 5. Completed */}
+                                {/* 5. Revision (NEW) */}
+                                <button 
+                                    onClick={() => { setMyTaskStatusFilter('Revision'); setSelectedProjectId('my_tasks'); }} 
+                                    className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'Revision' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
+                                >
+                                    Revision
+                                </button>
+
+                                {/* 6. Completed */}
                                 <button 
                                     onClick={() => { setMyTaskStatusFilter('Completed'); setSelectedProjectId('my_tasks'); }} 
                                     className={`w-full text-left px-3 py-1.5 text-xs rounded-md ${myTaskStatusFilter === 'Completed' && selectedProjectId === 'my_tasks' ? 'text-red-600 font-bold bg-red-50' : 'text-gray-500 hover:text-gray-700'}`}
@@ -659,6 +799,13 @@ const TeamView = () => {
           isWorkAdmin={isWorkAdmin}
           teamCreatorId={teamData?.createdBy} // PASSED CREATOR ID
           onInvite={() => setIsInviteModalOpen(true)}
+      />
+
+      {/* FILES GALLERY MODAL (NEW) */}
+      <FilesGalleryModal 
+        isOpen={isFilesGalleryOpen}
+        onClose={() => setIsFilesGalleryOpen(false)}
+        projects={projects}
       />
 
       {/* ADD PROJECT MODAL (Now triggered from Sidebar) */}
